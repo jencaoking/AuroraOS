@@ -19,8 +19,8 @@ struct TaskControlBlock {
 };
 
 extern "C" {
-    extern TaskControlBlock* g_current_tcb_ptr;
-    extern TaskControlBlock* g_next_tcb_ptr;
+    extern volatile TaskControlBlock* g_current_tcb_ptr;
+    extern volatile TaskControlBlock* g_next_tcb_ptr;
 }
 
 class Scheduler {

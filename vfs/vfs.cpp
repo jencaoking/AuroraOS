@@ -26,6 +26,9 @@ bool VfsManager::mount(const char* path, VNode* vnode) {
 
 int VfsManager::open(const char* path) {
     VNode* target = nullptr;
+    // TODO(L6): Currently this only supports exact path matching (e.g. "/tmp/log.txt").
+    // A real VFS should implement hierarchical path resolution:
+    // matching the longest mount prefix (e.g. "/tmp") and passing the remainder ("log.txt") to the VNode.
     for (int i = 0; i < mount_count_; i++) {
         if (strings_equal(mounts_[i].path, path)) {
             target = mounts_[i].vnode; break;
@@ -79,22 +82,12 @@ extern Mutex uart_mutex;
 class UartDevice : public VNode {
 public:
     int write(const char* buf, int len, int offset) override {
-        // Since we write characters directly to UART DR, in unprivileged mode it's okay 
-        // as long as there is no MPU block. But to be safe, we could use sys_print.
-        // Wait, the prompt says "为了在终端里丝滑地打字", meaning the read() is heavily used in shell_task.
-        // We'll keep the write simple, but use sys_print for safety in unprivileged mode?
-        // Actually, let's keep uart_mutex.lock() and uart_putc(buf[i]) as the user didn't ask to change write.
-        // Wait! Mutex::lock() calls Scheduler::instance().schedule(), which triggers PendSV!
-        // So uart_mutex.lock() WILL crash in Unprivileged mode!
-        // We must change Mutex::lock() to use sys_yield() OR we change UartDevice::write to use sys_print.
-        // Wait, sys_print takes a null-terminated string, not a buffer.
-        // We can just construct a small null-terminated string and use sys_print.
-        char temp[65];
-        int write_len = len > 64 ? 64 : len;
-        for (int i = 0; i < write_len; i++) temp[i] = buf[i];
-        temp[write_len] = '\0';
-        sys_print(temp);
-        return write_len;
+        (void)offset; // UART is a stream device, ignore offset
+        LockGuard lock(uart_mutex);
+        for (int i = 0; i < len; i++) {
+            uart_putc(buf[i]);
+        }
+        return len;
     }
 
     int read(char* buf, int len, int offset) override {

@@ -2,6 +2,7 @@
 #include "vfs.hpp"
 #include "syscall.hpp"
 #include "elf_loader.hpp"
+#include "config.h"
 
 bool Shell::strings_equal(const char* s1, const char* s2) {
     while (*s1 && *s2) {
@@ -38,7 +39,7 @@ void Shell::execute_command(const char* cmd) {
             print("Failed to open /tmp/log.txt\r\n");
         }
     } else if (strings_equal(cmd, "about")) {
-        print("auroraOS v0.1 - Microkernel RTOS\r\n");
+        print("auroraOS v" KERNEL_VERSION " - Microkernel RTOS\r\n");
         print("Architecture: ARM Cortex-M4\r\n");
     } else if (strings_equal(cmd, "exec")) {
         print("Launching dynamic application from /tmp/app.elf...\r\n");

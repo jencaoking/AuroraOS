@@ -4,11 +4,11 @@
 
 // 供汇编读取的两个全局 TCB 指针
 extern "C" {
-    TaskControlBlock* g_current_tcb_ptr = nullptr;
-    TaskControlBlock* g_next_tcb_ptr = nullptr;
+    volatile TaskControlBlock* g_current_tcb_ptr = nullptr;
+    volatile TaskControlBlock* g_next_tcb_ptr = nullptr;
 }
 
-static uint32_t tick_count = 0;
+static volatile uint32_t tick_count = 0;
 
 
 
