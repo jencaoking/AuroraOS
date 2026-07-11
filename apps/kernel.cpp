@@ -94,8 +94,7 @@ extern "C" {
 
 Mutex uart_mutex;
 
-// 声明用于动态创建 UART 设备的函数
-extern Device* create_uart_device();
+#include "uart_device.hpp"
 
 // =========================================================================
 // [核心系统进程] 低功耗空闲任务 (优先级最低，永远保持 Ready 状态)
@@ -154,7 +153,7 @@ extern "C" void kernel_main(void) {
     RamFile* elf_file = new RamFile(1024);
 
     // 挂载 设备 和 /tmp 目录下的虚拟文件
-    DeviceRegistry::instance().register_device(create_uart_device());
+    DeviceRegistry::instance().register_device(new UartDevice("uart0"));
     VfsManager::instance().mount("/tmp/log.txt", (VNode*)temp_file);
     VfsManager::instance().mount("/tmp/app.elf", (VNode*)elf_file);
     
