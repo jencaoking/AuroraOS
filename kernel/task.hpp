@@ -42,7 +42,21 @@ public:
         tcb.id = task_count;
         tcb.state = TaskState::Ready;
         tcb.sleep_ticks = 0;
-        // CONTROL: Bit 1 (SPSEL) = 1 (Use PSP). Bit 0 (nPRIV) = 0 (Privileged) or 1 (Unprivileged)
+        
+        // ====================================================================================
+        // 【架构安全声明：名义特权分离 vs 绝对隔离】
+        // ------------------------------------------------------------------------------------
+        // 这里的 is_privileged 参数通过设置 CONTROL 寄存器的 nPRIV 位（Bit 0）将线程降权为用户态。
+        // 用户态下将无法访问系统控制空间（SCS，如 NVIC/SCB），也无法执行 cpsid 等特权指令。
+        //
+        // ⚠️ 局限性警告 (Limitation)：
+        // 目前系统尚未配置 MPU (Memory Protection Unit)。在 Cortex-M 的默认内存映射中，
+        // SRAM 区域（内核数据、堆、栈所在的 0x20000000~ 区域）对非特权模式依然是全尺寸读写的！
+        // 因此，目前用户态代码理论上仍可以越权篡改 Scheduler::tasks[] 等内核数据结构。
+        // 若要实现真正的坚固沙盒，必须配置额外的 MPU Region 将内核内存设为 Privileged-only！
+        // 作为微内核演示项目，目前接受这一限制，特此声明。
+        // ====================================================================================
+        // CONTROL: Bit 1 (SPSEL) = 1 (使用 PSP). Bit 0 (nPRIV) = 0 (特权级) or 1 (非特权级)
         tcb.control_reg = is_privileged ? 0x02 : 0x03;
 
         uint32_t* top = stack_space + (stack_size / sizeof(uint32_t));
