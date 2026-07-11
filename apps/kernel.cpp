@@ -13,6 +13,7 @@
 #include "../net/eth_driver.hpp"
 
 extern Mutex uart_mutex;
+#include "mpu.hpp"
 
 #ifdef CONFIG_NET_LWIP
 #include "lwip/init.h"
@@ -225,9 +226,60 @@ void posix_app_task(void) {
 }
 #endif
 
+// =========================================================================
+// [核心系统进程] 黑客应用任务
+// ==========================================
+void hacker_app_task(void) {
+    sys_print("\r\n[Hacker App] Attempting to crack kernel security...\r\n");
+
+    // 尝试一：通过系统调用合法打印（正常通过）
+    sys_print("[Hacker App] Step 1: Legal syscall works fine.\r\n");
+
+    Scheduler::instance().sleep(3000); // 延时3秒，确保前面系统的启动日志能完整打印出来
+
+    // 此时主动将自身的 CPU 特权级降级为 Unprivileged (普通应用态)
+    sys_print("[Hacker App] Dropping CPU privilege level to User Mode...\r\n");
+    __asm__ volatile (
+        "mrs r0, control \n\t"
+        "orr r0, r0, #1 \n\t"    // Set Bit 0 (nPRIV) to 1 -> Unprivileged
+        "msr control, r0 \n\t"
+        "isb \n\t" 
+        : : : "r0", "memory"
+    );
+
+    // 尝试二：恶意构造一个指向内核核心变量的指针，试图修改系统的 Tick！
+    sys_print("[Hacker App] Step 2: Attempting illegal write to kernel tick_count...\r\n");
+    
+    extern volatile uint32_t tick_count;
+    tick_count = 0xDEADBEEF; // 这一行一旦执行，触发 MPU MemManage！
+
+    // 永远不会执行到这一步！
+    sys_print("[Hacker App] Oh no! System hacked!\r\n"); 
+}
+
+// 分配给 hacker_app_task 的栈，大小必须是 2 的幂次方且地址对齐
+alignas(1024) uint8_t hacker_stack[1024];
+
 extern "C" void kernel_main(void) {
     uart_init();
     KernelHeap::instance().init(&_heap_start, &_heap_end);
+
+    // ==========================================
+    // 激活 MPU 空间隔离安全防火墙
+    // ==========================================
+    MPU::instance().disable();
+
+    // 1. 保护 Flash 代码区 (假设从 0x00000000 开始，大小 256KB = 2^18)
+    // 权限：全系统只读 (AP_ALL_RO)，允许执行代码
+    MPU::instance().configure_region(0, 0x00000000, 18, MPU::AP_ALL_RO, false);
+
+    // 2. 锁死全局 RAM 内存空间 (假设从 0x20000000 开始，大小 64KB = 2^16)
+    // 权限：仅内核特权态读写 (AP_PRIV_RW)，严禁用户态触碰！
+    MPU::instance().configure_region(1, 0x20000000, 16, MPU::AP_PRIV_RW, true);
+
+    MPU::instance().enable();
+    sys_print("[Security] MPU Memory Protection Unit Activated.\r\n");
+
     VfsManager::instance().init();
 
 #ifdef CONFIG_FS_RAMFS
@@ -282,6 +334,9 @@ extern "C" void kernel_main(void) {
     Scheduler::instance().create_task(pi_test_low, new uint32_t[STACK_SIZE_TEST], STACK_SIZE_TEST*sizeof(uint32_t), TaskPriority::Low);
     Scheduler::instance().create_task(pi_test_mid, new uint32_t[STACK_SIZE_TEST], STACK_SIZE_TEST*sizeof(uint32_t), TaskPriority::Normal);
     Scheduler::instance().create_task(pi_test_high, new uint32_t[STACK_SIZE_TEST], STACK_SIZE_TEST*sizeof(uint32_t), TaskPriority::High);
+
+    // 4. Hacker App Task (带有 MPU 沙盒隔离保护的测试线程)
+    Scheduler::instance().create_task(hacker_app_task, reinterpret_cast<uint32_t*>(hacker_stack), sizeof(hacker_stack), TaskPriority::Low, 10);
 
 #ifdef CONFIG_TIMER_MANAGER
     // 4. 定时器守护进程与测试 App

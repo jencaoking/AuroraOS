@@ -108,6 +108,12 @@ PendSV_Handler:
     ldr r3, =g_current_tcb_ptr
     str r2, [r3]                @ *g_current_tcb_ptr = *g_next_tcb_ptr (同步 C++ 的选择)
 
+    @ --- 动态更新 MPU 沙盒 ---
+    push {r2, lr}               @ 保存 r2 (新 TCB 指针) 和 lr (EXC_RETURN)，8字节对齐
+    mov r0, r2                  @ r0 = 参数 next_tcb
+    bl mpu_switch_sandbox       @ 调用 C 函数 mpu_switch_sandbox
+    pop {r2, lr}                @ 恢复 r2 和 lr
+
     @ --- 恢复新线程的上下文 ---
     ldr r0, [r2]                @ r0 = tcb_next->stack_ptr (获取新线程的栈顶)
 

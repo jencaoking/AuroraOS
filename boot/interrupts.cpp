@@ -4,12 +4,20 @@
 #include "syscall.hpp"
 #include "timer.hpp"
 #include "work_queue.hpp"
+#include "mpu.hpp"
 
 // 供 PendSV 汇编读取的两个全局 TCB 指针
 // 声明为非 volatile：汇编直接使用符号地址，编译器临界区内通过 Arch:: 保护
 extern "C" {
     TaskControlBlock* volatile g_current_tcb_ptr = nullptr;
     TaskControlBlock* volatile g_next_tcb_ptr    = nullptr;
+
+    // 由 PendSV_Handler 调用的 MPU 动态沙盒切换
+    void mpu_switch_sandbox(TaskControlBlock* next) {
+        if (next && next->size_pow2 > 0) {
+            MPU::instance().update_user_sandbox(next->stack_base, next->size_pow2);
+        }
+    }
 }
 
 // 系统 Tick 计数器（全局可见，供 lwIP OSAL 等读取系统时间）
@@ -39,6 +47,20 @@ extern "C" {
                 uart_puts("[Kernel] Unknown SVC ID!\n");
                 break;
         }
+    }
+
+    // ================================================================
+    // 内存管理异常处理（捕捉 MPU 违规访问）
+    // ================================================================
+    void MemManage_Handler(void) {
+        uart_puts("\r\n[MemManage_Handler] Memory Protection Violation Detected! \r\n");
+        uart_puts("Access Denied! Offending thread terminated by kernel.\r\n");
+        while (1) {} // 简单处理：挂起系统。未来可升级为销毁当前 TCB 并触发调度
+    }
+
+    void HardFault_Handler(void) {
+        uart_puts("\r\n[HardFault_Handler] Hard Fault Detected! System Halted.\r\n");
+        while (1) {}
     }
 }
 

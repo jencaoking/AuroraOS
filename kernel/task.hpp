@@ -33,6 +33,8 @@ struct TaskControlBlock {
     uint32_t     sleep_ticks;     // 剩余休眠 Tick 数
     TaskPriority base_priority;   // 基础优先级
     TaskPriority current_priority;// 动态优先级（用于优先级继承）
+    uint32_t     stack_base;      // 栈基址（用于 MPU）
+    uint8_t      size_pow2;       // 栈大小的 2 的幂次方（用于 MPU）
 };
 
 // 前向声明：供 PendSV 汇编读取的两个全局 TCB 指针
@@ -64,7 +66,8 @@ public:
     TaskControlBlock* create_task(void (*task_entry)(void),
                      uint32_t* stack_space,
                      uint32_t  stack_size,
-                     TaskPriority prio = TaskPriority::Normal) {
+                     TaskPriority prio = TaskPriority::Normal,
+                     uint8_t size_pow2 = 0) { // 默认为 0 表示未指定
         if (task_count >= MAX_TASKS) return nullptr;
 
         TaskControlBlock& tcb = tasks[task_count];
@@ -74,6 +77,8 @@ public:
         tcb.base_priority = prio;
         tcb.current_priority = prio;
         tcb.entry_point = task_entry;
+        tcb.stack_base = reinterpret_cast<uint32_t>(stack_space);
+        tcb.size_pow2 = size_pow2;
 
         // 调用 HAL 接口完成 Cortex-M4 栈帧伪造，与具体架构解耦
         tcb.stack_ptr = Arch::init_thread_stack(task_entry, stack_space, stack_size);
