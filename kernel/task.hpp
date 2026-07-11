@@ -145,6 +145,12 @@ public:
     // 遵循 F.16: 返回裸指针仅表示非所有权观察（调度器拥有 TCB 数组）
     TaskControlBlock* get_current_tcb() { return &tasks[current_task_index]; }
 
+    int get_task_count() const { return task_count; }
+    TaskControlBlock* get_task(int index) { 
+        if (index >= 0 && index < task_count) return &tasks[index]; 
+        return nullptr;
+    }
+
     // =========================================================================
     // start(): 从特权 main 上下文启动调度器，跳入第一个任务
     // 架构相关的 PSP/CONTROL 切换与栈帧恢复已封装在 Arch::start_first_task()

@@ -15,6 +15,7 @@ private:
 
     BlockHeader* head_block;
     size_t total_free_memory;
+    size_t total_size;
     Mutex heap_mutex_;        // 保护整个全局堆的互斥锁
 
 public:
@@ -37,8 +38,12 @@ public:
         head_block->is_free = true;
         head_block->next = nullptr;
 
+        total_size = end - start;
         total_free_memory = head_block->size - sizeof(BlockHeader);
     }
+
+    size_t get_total_memory() const { return total_size; }
+    size_t get_free_memory() const { return total_free_memory; }
 
     // 分配内存
     void* allocate(size_t size) {
@@ -64,6 +69,7 @@ public:
                 }
 
                 current->is_free = false;
+                total_free_memory -= current->size;
                 // 返回越过 BlockHeader 之后的实际可用内存地址
                 return reinterpret_cast<void*>(reinterpret_cast<uintptr_t>(current) + sizeof(BlockHeader));
             }
@@ -81,6 +87,7 @@ public:
             reinterpret_cast<uintptr_t>(ptr) - sizeof(BlockHeader)
         );
         target->is_free = true;
+        total_free_memory += target->size;
 
         // 整理内存：自动合并连续的空闲块 (Coalesce Free Blocks)
         BlockHeader* current = head_block;

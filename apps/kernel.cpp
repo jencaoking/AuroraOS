@@ -95,6 +95,7 @@ extern "C" {
 Mutex uart_mutex;
 
 #include "uart_device.hpp"
+#include "procfs.hpp"
 
 // =========================================================================
 // [核心系统进程] 低功耗空闲任务 (优先级最低，永远保持 Ready 状态)
@@ -156,6 +157,10 @@ extern "C" void kernel_main(void) {
     DeviceRegistry::instance().register_device(new UartDevice("uart0"));
     VfsManager::instance().mount("/tmp/log.txt", (VNode*)temp_file);
     VfsManager::instance().mount("/tmp/app.elf", (VNode*)elf_file);
+    
+    // 挂载 ProcFS 虚拟节点
+    VfsManager::instance().mount("/proc/meminfo", new MemInfoNode());
+    VfsManager::instance().mount("/proc/taskinfo", new TaskInfoNode());
     
     // 初始化调度器
     Scheduler::instance().init();

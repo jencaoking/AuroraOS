@@ -74,6 +74,8 @@ void Shell::execute_command(const char* raw_cmd) {
         print("  exec      - Launch dynamic ELF app\r\n");
         print("  ifconfig  - Show network interface status\r\n");
         print("  udpsend   - Send UDP packet <ip> <port> <msg>\r\n");
+        print("  free      - Show memory usage (/proc/meminfo)\r\n");
+        print("  ps        - Show running tasks (/proc/taskinfo)\r\n");
     } 
     else if (strings_equal(argv[0], "cat")) {
         int fd = open("/tmp/log.txt", 0);
@@ -91,6 +93,30 @@ void Shell::execute_command(const char* raw_cmd) {
             print("Failed to open /tmp/log.txt\r\n");
         }
     } 
+    else if (strings_equal(argv[0], "free")) {
+        int fd = open("/proc/meminfo", 0);
+        if (fd >= 0) {
+            char buf[256];
+            int bytes = read(fd, buf, sizeof(buf)-1);
+            if (bytes > 0) {
+                buf[bytes] = '\0';
+                print(buf);
+            }
+            close(fd);
+        }
+    }
+    else if (strings_equal(argv[0], "ps")) {
+        int fd = open("/proc/taskinfo", 0);
+        if (fd >= 0) {
+            char buf[512];
+            int bytes = read(fd, buf, sizeof(buf)-1);
+            if (bytes > 0) {
+                buf[bytes] = '\0';
+                print(buf);
+            }
+            close(fd);
+        }
+    }
     else if (strings_equal(argv[0], "about")) {
         print("auroraOS v" KERNEL_VERSION " - Microkernel RTOS\r\n");
         print("Architecture: ARM Cortex-M4\r\n");
