@@ -21,7 +21,9 @@ extern class UartDevice g_uart_device;
 
 void dummy_task(void) {
     while (1) {
-        // Idle task must never sleep. It just spins to keep CPU busy when others sleep.
+        // M4: Idle task must never block via software (sys_sleep),
+        // but it SHOULD yield the hardware to low-power state.
+        __asm__ volatile ("wfi");
     }
 }
 

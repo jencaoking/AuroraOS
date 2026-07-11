@@ -13,9 +13,6 @@ static uint32_t tick_count = 0;
 
 
 extern "C" {
-
-
-extern "C" {
     // SVC 中断的处理逻辑
     // frame 是由硬件自动压入栈中的上下文指针
     void SVC_Handler_C(InterruptFrame* frame) {
