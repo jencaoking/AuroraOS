@@ -179,6 +179,39 @@ void pi_test_high() {
     while (1) Scheduler::instance().sleep(10000);
 }
 
+#include "timer.hpp"
+#include "posix.hpp"
+
+// 定时器守护线程的入口包裹函数
+void timer_daemon_entry(void) {
+    TimerManager::instance().daemon_task();
+}
+
+// 用户回调：定时器到期时执行
+void my_timer_callback(void* arg) {
+    int fd = open("/dev/uart0", 0);
+    if (fd >= 0) {
+        write(fd, "\r\n[Timer Callback] Software Timer Triggered asynchronously!\r\n", 61);
+        close(fd);
+    }
+}
+
+void posix_app_task(void) {
+    int fd = open("/dev/uart0", 0);
+    if (fd >= 0) {
+        // 创建一个 2000 毫秒（2秒）周期触发的软件定时器
+        TimerManager::instance().start_timer(2000, TimerType::Periodic, my_timer_callback);
+        write(fd, "\r\n[App] Software Timer (2s) scheduled.\r\n", 40);
+
+        while (1) {
+            write(fd, "[App] Main app loop running...\r\n", 32);
+            Scheduler::instance().sleep(3000); // 故意睡 3 秒，和定时器的 2 秒产生异步交错
+        }
+        close(fd);
+    }
+    while (1) { Scheduler::instance().sleep(10000); } 
+}
+
 extern "C" void kernel_main(void) {
     uart_init();
     KernelHeap::instance().init(&_heap_start, &_heap_end);
@@ -226,7 +259,11 @@ extern "C" void kernel_main(void) {
     Scheduler::instance().create_task(pi_test_mid, new uint32_t[128], 128*sizeof(uint32_t), TaskPriority::Normal);
     Scheduler::instance().create_task(pi_test_high, new uint32_t[128], 128*sizeof(uint32_t), TaskPriority::High);
 
-    // 将调度权移交给内核，必须最后调用！起 lwIP 协议栈引擎（内部回调中将以 Realtime 优先级注册网卡 RX 任务）
+    // 4. 定时器守护进程与测试 App
+    Scheduler::instance().create_task(timer_daemon_entry, new uint32_t[256], 256*sizeof(uint32_t), TaskPriority::Realtime);
+    Scheduler::instance().create_task(posix_app_task, new uint32_t[256], 256*sizeof(uint32_t), TaskPriority::Low);
+
+    // 起 lwIP 协议栈引擎（内部回调中将以 Realtime 优先级注册网卡 RX 任务）
     sys_print("[lwIP] Initializing TCP/IP Engine...\r\n");
     tcpip_init(tcpip_init_done, nullptr);
 

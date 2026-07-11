@@ -1,0 +1,124 @@
+#ifndef AURORA_TIMER_HPP
+#define AURORA_TIMER_HPP
+
+#include <stdint.h>
+#include "task.hpp"
+#include "semaphore.hpp"
+
+// 定时器工作模式
+enum class TimerType {
+    OneShot,  // 单次触发
+    Periodic  // 周期性触发
+};
+
+// 定时器回调函数签名，允许携带一个自定义的透传参数
+using TimerCallback = void (*)(void* arg);
+
+struct SoftwareTimer {
+    bool active;
+    TimerType type;
+    uint32_t expire_tick;     // 绝对到期时间 (系统的全局 tick 值)
+    uint32_t period_ticks;    // 周期时间
+    TimerCallback callback;
+    void* arg;
+};
+
+class TimerManager {
+private:
+    static constexpr int MAX_TIMERS = 8;
+    SoftwareTimer timers_[MAX_TIMERS];
+    
+    // 用于唤醒守护线程的二值信号量
+    Semaphore wakeup_sem_{0};
+    uint32_t current_tick_ = 0;
+
+    TimerManager() {
+        for (int i = 0; i < MAX_TIMERS; i++) timers_[i].active = false;
+    }
+
+public:
+    static TimerManager& instance() {
+        static TimerManager mgr;
+        return mgr;
+    }
+
+    // 1. 供应用层调用的 API：创建并启动定时器
+    int start_timer(uint32_t period_ticks, TimerType type, TimerCallback cb, void* arg = nullptr) {
+        Arch::disable_interrupts();
+        for (int i = 0; i < MAX_TIMERS; i++) {
+            if (!timers_[i].active) {
+                timers_[i].period_ticks = period_ticks;
+                timers_[i].type = type;
+                timers_[i].callback = cb;
+                timers_[i].arg = arg;
+                timers_[i].expire_tick = current_tick_ + period_ticks;
+                timers_[i].active = true;
+                
+                Arch::enable_interrupts();
+                return i; // 返回定时器 ID
+            }
+        }
+        Arch::enable_interrupts();
+        return -1; // 定时器槽位已满
+    }
+
+    void stop_timer(int id) {
+        if (id >= 0 && id < MAX_TIMERS) {
+            Arch::disable_interrupts();
+            timers_[id].active = false;
+            Arch::enable_interrupts();
+        }
+    }
+
+    // 2. 供 SysTick 中断调用的极简硬件钩子
+    void on_tick() {
+        current_tick_++;
+        bool need_wakeup = false;
+        
+        for (int i = 0; i < MAX_TIMERS; i++) {
+            // 检查是否有处于激活状态且已经到期的定时器
+            if (timers_[i].active && current_tick_ >= timers_[i].expire_tick) {
+                need_wakeup = true;
+                break;
+            }
+        }
+        
+        // 如果有定时器到期，立刻发送信号量唤醒后台的 C++ 守护线程
+        if (need_wakeup) {
+            wakeup_sem_.signal(); 
+        }
+    }
+
+    // 3. 定时器守护线程 (Timer Daemon) 的执行中枢
+    void daemon_task() {
+        while (true) {
+            // 绝大多数时间，这个线程都在这里 0 功耗休眠阻塞
+            wakeup_sem_.wait(); 
+
+            Arch::disable_interrupts();
+            uint32_t tick_now = current_tick_;
+            Arch::enable_interrupts();
+
+            for (int i = 0; i < MAX_TIMERS; i++) {
+                if (timers_[i].active && tick_now >= timers_[i].expire_tick) {
+                    
+                    // a. 真正执行用户的耗时回调（脱离了中断上下文，极其安全！）
+                    if (timers_[i].callback) {
+                        timers_[i].callback(timers_[i].arg);
+                    }
+                    
+                    // b. 根据模式决定是自动重启还是销毁
+                    Arch::disable_interrupts();
+                    if (timers_[i].type == TimerType::Periodic) {
+                        timers_[i].expire_tick = tick_now + timers_[i].period_ticks;
+                    } else {
+                        timers_[i].active = false;
+                    }
+                    Arch::enable_interrupts();
+                }
+            }
+        }
+    }
+};
+
+#endif

@@ -46,8 +46,14 @@ extern "C" {
 //                       * 高优先级任务唤醒后立即抢占低优先级
 //                       * 同级任务轮转时间片
 // ================================================================
+#include "timer.hpp"
+
 void SysTick_Handler(void) {
     tick_count++;
+    
+    // 1. 驱动软件定时器引擎
+    TimerManager::instance().on_tick();
+
     Scheduler& sched = Scheduler::instance();
 
     // Step 1: 更新所有休眠任务的倒计时
