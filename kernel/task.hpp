@@ -60,6 +60,8 @@ public:
     void schedule() {
         if (task_count <= 1) return;
 
+        __asm__ volatile ("cpsid i" : : : "memory"); // 临界区：屏蔽所有中断
+
         uint32_t next_task = current_task_index;
         bool found = false;
 
@@ -81,18 +83,24 @@ public:
             // 触发 PendSV 切换上下文
             *reinterpret_cast<volatile uint32_t*>(0xE000ED04) = (1 << 28);
         }
+
+        __asm__ volatile ("cpsie i" : : : "memory"); // 恢复中断
     }
 
     // 3. 让当前线程交出 CPU 并休眠指定时间
     void sleep(uint32_t ticks) {
+        __asm__ volatile ("cpsid i" : : : "memory");
         TaskControlBlock* current = get_current_tcb();
         current->sleep_ticks = ticks;
         current->state = TaskState::Sleeping;
+        __asm__ volatile ("cpsie i" : : : "memory");
+        
         schedule(); // 立即触发调度，让出 CPU
     }
 
     // 4. 供定时器中断调用的时间刷新函数
     void tick_update() {
+        __asm__ volatile ("cpsid i" : : : "memory");
         for (uint32_t i = 0; i < task_count; i++) {
             if (tasks[i].state == TaskState::Sleeping) {
                 if (tasks[i].sleep_ticks > 0) {
@@ -103,6 +111,7 @@ public:
                 }
             }
         }
+        __asm__ volatile ("cpsie i" : : : "memory");
     }
 
     TaskControlBlock* get_current_tcb() { return &tasks[current_task_index]; }
