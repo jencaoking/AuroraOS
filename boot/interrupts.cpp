@@ -10,34 +10,7 @@ extern "C" {
 
 static uint32_t tick_count = 0;
 
-InterruptManager& InterruptManager::instance()
-{
-    static InterruptManager mgr;
-    return mgr;
-}
 
-void InterruptManager::init()
-{
-    for (int i = 0; i < MAX_IRQ; i++)
-        handlers_[i] = nullptr;
-}
-
-void InterruptManager::register_handler(int irq, InterruptHandler handler)
-{
-    if (irq >= 0 && irq < MAX_IRQ)
-        handlers_[irq] = handler;
-}
-
-void InterruptManager::unregister_handler(int irq)
-{
-    if (irq >= 0 && irq < MAX_IRQ)
-        handlers_[irq] = nullptr;
-}
-
-void InterruptManager::handle(InterruptFrame* frame)
-{
-    (void)frame;
-}
 
 extern "C" {
 
