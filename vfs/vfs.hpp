@@ -8,6 +8,7 @@ public:
     virtual int read(char* buf, int len, int offset) { return -1; }
     virtual int write(const char* buf, int len, int offset) { return -1; }
     virtual int ioctl(int request, void* arg) { return -1; }
+    virtual int get_size() const { return 0; }
 };
 
 struct MountPoint {
@@ -38,7 +39,7 @@ public:
     int ioctl(int fd, int request, void* arg);
     
     // 【新增】系统调用：移动文件读写游标
-    void lseek(int fd, int offset);
+    int lseek(int fd, int offset, int whence);
 
 private:
     VfsManager() = default;

@@ -57,7 +57,7 @@ void tcpip_init_done(void* arg) {
     sys_print("[lwIP] TCP/IP Core Stack Booted Successfully!\r\n");
 
     // 1. 从配置层读取 IPv4 参数（IP/掩码/网关统一由 net_config.h 提供）
-    const NetIpv4Config cfg = default_ipv4_config;
+    const NetIpv4Config cfg = get_default_ipv4_config();
     ip4_addr_t ipaddr, netmask, gw;
     IP4_ADDR(&ipaddr,  cfg.ip[0],      cfg.ip[1],      cfg.ip[2],      cfg.ip[3]);
     IP4_ADDR(&netmask, cfg.netmask[0], cfg.netmask[1], cfg.netmask[2], cfg.netmask[3]);

@@ -54,12 +54,10 @@ int ioctl(int fd, int request, void* arg) {
 }
 
 int lseek(int fd, int offset, int whence) {
-    (void)whence;
 #ifdef CONFIG_VFS
-    VfsManager::instance().lseek(fd, offset);
-    return offset;
+    return VfsManager::instance().lseek(fd, offset, whence);
 #else
-    (void)fd; (void)offset;
+    (void)fd; (void)offset; (void)whence;
     return -1;
 #endif
 }

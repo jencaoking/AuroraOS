@@ -18,12 +18,46 @@ struct NetIpv4Config {
     bool    use_dhcp;     // true: 由 DHCP 动态获取（需启用 LWIP_DHCP）；false: 使用静态配置
 };
 
-// 板级默认静态 IPv4 配置
-constexpr NetIpv4Config default_ipv4_config = {
-    {192, 168, 1, 100},
-    {255, 255, 255, 0},
-    {192, 168, 1, 1},
-    false
-};
+#include "autoconf.h"
+
+inline uint8_t parse_octet(const char*& str) {
+    uint8_t val = 0;
+    while (*str >= '0' && *str <= '9') {
+        val = val * 10 + (*str - '0');
+        str++;
+    }
+    if (*str == '.' || *str == ':') str++;
+    return val;
+}
+
+inline uint8_t parse_hex_octet(const char*& str) {
+    uint8_t val = 0;
+    while ((*str >= '0' && *str <= '9') || 
+           (*str >= 'a' && *str <= 'f') || 
+           (*str >= 'A' && *str <= 'F')) {
+        uint8_t digit = 0;
+        if (*str >= '0' && *str <= '9') digit = *str - '0';
+        else if (*str >= 'a' && *str <= 'f') digit = *str - 'a' + 10;
+        else if (*str >= 'A' && *str <= 'F') digit = *str - 'A' + 10;
+        val = val * 16 + digit;
+        str++;
+    }
+    if (*str == ':' || *str == '-') str++;
+    return val;
+}
+
+inline NetIpv4Config get_default_ipv4_config() {
+    NetIpv4Config cfg = {{0, 0, 0, 0}, {255, 255, 255, 0}, {192, 168, 1, 1}, false};
+#ifdef CONFIG_NET_DEFAULT_IP
+    const char* ip_str = CONFIG_NET_DEFAULT_IP;
+    cfg.ip[0] = parse_octet(ip_str);
+    cfg.ip[1] = parse_octet(ip_str);
+    cfg.ip[2] = parse_octet(ip_str);
+    cfg.ip[3] = parse_octet(ip_str);
+#else
+    cfg.ip[0] = 192; cfg.ip[1] = 168; cfg.ip[2] = 1; cfg.ip[3] = 100;
+#endif
+    return cfg;
+}
 
 #endif // NET_CONFIG_H

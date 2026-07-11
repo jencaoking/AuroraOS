@@ -63,10 +63,23 @@ int VfsManager::write(int fd, const char* buf, int len) {
     return bytes;
 }
 
-void VfsManager::lseek(int fd, int offset) {
+int VfsManager::lseek(int fd, int offset, int whence) {
     if (fd >= 0 && fd < MAX_OPEN_FILES && fd_table_[fd].used) {
-        fd_table_[fd].offset = offset;
+        int new_offset = -1;
+        if (whence == 0) { // SEEK_SET
+            new_offset = offset;
+        } else if (whence == 1) { // SEEK_CUR
+            new_offset = fd_table_[fd].offset + offset;
+        } else if (whence == 2) { // SEEK_END
+            new_offset = fd_table_[fd].vnode->get_size() + offset;
+        }
+        
+        if (new_offset >= 0) {
+            fd_table_[fd].offset = new_offset;
+            return new_offset;
+        }
     }
+    return -1;
 }
 
 void VfsManager::close(int fd) {

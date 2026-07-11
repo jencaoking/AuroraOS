@@ -18,7 +18,7 @@ bool ElfLoader::load_and_exec(const char* filepath) {
 
     // 1. 读取并校验 ELF 文件头部
     Elf32_Ehdr ehdr;
-    VfsManager::instance().lseek(fd, 0);
+    VfsManager::instance().lseek(fd, 0, 0);
     int read_bytes = VfsManager::instance().read(fd, reinterpret_cast<char*>(&ehdr), sizeof(ehdr));
     
     if (read_bytes != sizeof(ehdr) ||
@@ -41,7 +41,7 @@ bool ElfLoader::load_and_exec(const char* filepath) {
     Elf32_Phdr phdr;
     for (int i = 0; i < ehdr.e_phnum; i++) {
         // 定位到第 i 个程序段头部
-        VfsManager::instance().lseek(fd, ehdr.e_phoff + i * ehdr.e_phentsize);
+        VfsManager::instance().lseek(fd, ehdr.e_phoff + i * ehdr.e_phentsize, 0);
         VfsManager::instance().read(fd, reinterpret_cast<char*>(&phdr), sizeof(phdr));
 
         // 我们只关心 PT_LOAD 可加载段 (包含了 .text 代码和 .data 变量)
@@ -55,7 +55,7 @@ bool ElfLoader::load_and_exec(const char* filepath) {
             }
 
             // 从文件中读取二进制指令及初始数据到分配的内存中
-            VfsManager::instance().lseek(fd, phdr.p_offset);
+            VfsManager::instance().lseek(fd, phdr.p_offset, 0);
             VfsManager::instance().read(fd, segment_memory, phdr.p_filesz);
 
             // 如果 p_memsz > p_filesz，说明多出来的部分是 .bss 段（未初始化变量），必须清零

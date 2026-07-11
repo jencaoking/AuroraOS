@@ -1,6 +1,8 @@
 #include "eth_driver.hpp"
 #include "mutex.hpp"
 #include "syscall.hpp"
+#include "autoconf.h"
+#include "config/net_config.h"
 
 extern Mutex uart_mutex;
 
@@ -12,14 +14,25 @@ StellarisEth::StellarisEth()
       mac_data_(reinterpret_cast<uint32_t*>(BOARD_ETH_MAC_BASE + 0x018)),
       mac_ia0_(reinterpret_cast<uint32_t*>(BOARD_ETH_MAC_BASE + 0x01C)),
       mac_ia1_(reinterpret_cast<uint32_t*>(BOARD_ETH_MAC_BASE + 0x020)) {
-    // MAC 地址由 BSP (board.h) 提供，写入基类 protected 成员
-    // (C++ 不允许在派生类初始化列表中初始化基类成员，故在函数体内赋值)
+
+    // 使用 Kconfig 配置的默认 MAC 地址
+#ifdef CONFIG_NET_DEFAULT_MAC
+    const char* mac_str = CONFIG_NET_DEFAULT_MAC;
+    mac_address_[0] = parse_hex_octet(mac_str);
+    mac_address_[1] = parse_hex_octet(mac_str);
+    mac_address_[2] = parse_hex_octet(mac_str);
+    mac_address_[3] = parse_hex_octet(mac_str);
+    mac_address_[4] = parse_hex_octet(mac_str);
+    mac_address_[5] = parse_hex_octet(mac_str);
+#else
+    // 如果没有配置则回退到 BSP (board.h) 提供的值
     mac_address_[0] = BOARD_DEFAULT_MAC0;
     mac_address_[1] = BOARD_DEFAULT_MAC1;
     mac_address_[2] = BOARD_DEFAULT_MAC2;
     mac_address_[3] = BOARD_DEFAULT_MAC3;
     mac_address_[4] = BOARD_DEFAULT_MAC4;
     mac_address_[5] = BOARD_DEFAULT_MAC5;
+#endif
 }
 
 bool StellarisEth::init() {
