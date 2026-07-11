@@ -3,18 +3,24 @@
 
 #include <stdint.h>
 
-// 线程状态
+// 1. 增加 Sleeping 状态
 enum class TaskState {
     Ready,
-    Running
+    Running,
+    Sleeping 
 };
 
-// 线程控制块 (TCB)
 struct TaskControlBlock {
-    uint32_t* stack_ptr;       // 必须是第一个成员！供汇编直接通过偏移量 0 读取
+    uint32_t* stack_ptr;       
     TaskState state;
     uint32_t  id;
+    uint32_t  sleep_ticks;     // 记录还需要休眠多少个系统 Tick
 };
+
+extern "C" {
+    extern TaskControlBlock* g_current_tcb_ptr;
+    extern TaskControlBlock* g_next_tcb_ptr;
+}
 
 class Scheduler {
 public:
@@ -23,55 +29,80 @@ public:
         return sched;
     }
 
-    // 初始化就绪队列
     void init() {
         current_task_index = 0;
         task_count = 0;
     }
 
-    // 创建新线程
     void create_task(void (*task_entry)(void), uint32_t* stack_space, uint32_t stack_size) {
         if (task_count >= MAX_TASKS) return;
 
         TaskControlBlock& tcb = tasks[task_count];
         tcb.id = task_count;
         tcb.state = TaskState::Ready;
+        tcb.sleep_ticks = 0;
 
-        // 模拟硬件压栈：在独立的栈空间尾部伪造一个初始的中断帧 (Interrupt Frame)
         uint32_t* top = stack_space + (stack_size / sizeof(uint32_t));
-        
-        top--; *top = 0x01000000;   // xPSR: 必须设置 Thumb 状态位 (Bit 24)
-        top--; *top = reinterpret_cast<uint32_t>(task_entry); // PC: 线程入口函数地址
-        top--; *top = 0xFFFFFFFD;   // LR: 退出时返回 0xFFFFFFFD (表示返回后使用进程堆栈 PSP)
-        top--; *top = 0;            // R12
-        top--; *top = 0;            // R3
-        top--; *top = 0;            // R2
-        top--; *top = 0;            // R1
-        top--; *top = 0;            // R0
+        top--; *top = 0x01000000;   
+        top--; *top = reinterpret_cast<uint32_t>(task_entry); 
+        top--; *top = 0xFFFFFFFD;   
+        top -= 5;                   
+        top -= 8;                   
 
-        // 模拟软件压栈：手动放置 r4 - r11 的初始值（全设为 0 即可）
-        for (int i = 0; i < 8; i++) {
-            top--;
-            *top = 0;
-        }
-
-        tcb.stack_ptr = top; // 将伪造好上下文的栈顶存入 TCB
+        tcb.stack_ptr = top; 
         task_count++;
     }
 
-    // 选出下一个要运行的线程（时间片轮转切换）
+    // 2. 调度算法升级：跳过正在休眠的任务
     void schedule() {
         if (task_count <= 1) return;
 
-        current_task_index = (current_task_index + 1) % task_count;
+        uint32_t next_task = current_task_index;
+        bool found = false;
 
-        // 触发 PendSV 中断，通知 CPU 执行上下文切换
-        // 向 ICSR 寄存器 (0xE000ED04) 的 Bit 28 写 1 挂起 PendSV
-        *reinterpret_cast<volatile uint32_t*>(0xE000ED04) = (1 << 28);
+        // 轮询寻找下一个处于 Ready 或 Running 状态的任务
+        for (uint32_t i = 0; i < task_count; i++) {
+            next_task = (next_task + 1) % task_count;
+            if (tasks[next_task].state != TaskState::Sleeping) {
+                found = true;
+                break;
+            }
+        }
+
+        if (found && next_task != current_task_index) {
+            // 在触发中断前，必须先把指针更新好，否则 Thread 模式下会立即陷入 PendSV 导致空指针
+            g_current_tcb_ptr = &tasks[current_task_index];
+            current_task_index = next_task;
+            g_next_tcb_ptr = &tasks[current_task_index];
+            
+            // 触发 PendSV 切换上下文
+            *reinterpret_cast<volatile uint32_t*>(0xE000ED04) = (1 << 28);
+        }
+    }
+
+    // 3. 让当前线程交出 CPU 并休眠指定时间
+    void sleep(uint32_t ticks) {
+        TaskControlBlock* current = get_current_tcb();
+        current->sleep_ticks = ticks;
+        current->state = TaskState::Sleeping;
+        schedule(); // 立即触发调度，让出 CPU
+    }
+
+    // 4. 供定时器中断调用的时间刷新函数
+    void tick_update() {
+        for (uint32_t i = 0; i < task_count; i++) {
+            if (tasks[i].state == TaskState::Sleeping) {
+                if (tasks[i].sleep_ticks > 0) {
+                    tasks[i].sleep_ticks--;
+                }
+                if (tasks[i].sleep_ticks == 0) {
+                    tasks[i].state = TaskState::Ready; // 睡醒了，恢复就绪
+                }
+            }
+        }
     }
 
     TaskControlBlock* get_current_tcb() { return &tasks[current_task_index]; }
-    TaskControlBlock* get_next_tcb() { return &tasks[current_task_index]; } // 触发中断后当前 index 已变
 
 private:
     Scheduler() = default;
@@ -80,11 +111,5 @@ private:
     uint32_t current_task_index = 0;
     uint32_t task_count = 0;
 };
-
-// 供汇编直接呼叫的两个全局指针，用来读取旧 SP 和写入新 SP
-extern "C" {
-    extern TaskControlBlock* g_current_tcb_ptr;
-    extern TaskControlBlock* g_next_tcb_ptr;
-}
 
 #endif

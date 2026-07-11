@@ -15,6 +15,7 @@ CMakeFiles/auroraOS.elf.dir/kernel.cpp.obj: J:/PROJECT/auroraOS/kernel.cpp \
   J:/PROJECT/auroraOS/config.h \
   J:/PROJECT/auroraOS/interrupts.hpp \
   J:/PROJECT/auroraOS/memory.hpp \
+  J:/PROJECT/auroraOS/mutex.hpp \
   J:/PROJECT/auroraOS/softbus.hpp \
   J:/PROJECT/auroraOS/task.hpp \
   J:/PROJECT/auroraOS/uart.h
@@ -56,6 +57,8 @@ J:/PROJECT/auroraOS/kernel.cpp:
 J:/PROJECT/auroraOS/config.h:
 
 J:/PROJECT/auroraOS/memory.hpp:
+
+J:/PROJECT/auroraOS/mutex.hpp:
 
 J:/PROJECT/auroraOS/softbus.hpp:
 

@@ -46,18 +46,16 @@ void SVC_Handler(InterruptFrame* frame)
     InterruptManager::instance().handle(frame);
 }
 
-void SysTick_Handler(void)
-{
+void SysTick_Handler(void) {
     tick_count++;
+    Scheduler& sched = Scheduler::instance();
     
-    // 每 20ms 进行一次线程调度切换 (时间片轮转)
-    if (tick_count % 20 == 0) {
-        Scheduler& sched = Scheduler::instance();
-        g_current_tcb_ptr = sched.get_current_tcb();
-        
-        sched.schedule(); // 改变内部任务索引，并挂起 PendSV
-        
-        g_next_tcb_ptr = sched.get_current_tcb();
+    // 更新所有处于 Sleeping 状态的线程
+    sched.tick_update();
+    
+    // 每 10ms 强制进行一次时间片轮转（如果线程没被阻塞的话）
+    if (tick_count % 10 == 0) {
+        sched.schedule(); 
     }
 }
 

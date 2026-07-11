@@ -4,59 +4,67 @@
 #include "task.hpp"
 #include "memory.hpp"
 #include "softbus.hpp"
+#include "mutex.hpp"
 
 extern "C" {
     extern uint32_t _heap_start;
     extern uint32_t _heap_end;
 }
 
-// ==========================================
-// 软总线守护线程 (Daemon Task)
-// ==========================================
+// 实例化一个全局互斥锁，保护串口
+Mutex uart_mutex;
+
+// 改进版的带锁打印
+void safe_print(const char* msg) {
+    uart_mutex.lock();
+    uart_puts(msg);
+    uart_mutex.unlock();
+}
+
 extern "C" void bus_daemon_task(void) {
     while (1) {
-        // 持续剥离和解析总线上的协议帧
         SoftBus::instance().poll();
         
-        // 防止独占 CPU，简单延时让出（后续可以替换为线程 sleep 机制）
-        for (volatile int i = 0; i < 5000; i++);
+        // 优雅休眠：让出 CPU 10 个 Tick (10ms)，不再死占算力
+        Scheduler::instance().sleep(10);
     }
 }
 
-// 模拟另外一个前台业务线程
 extern "C" void app_task(void) {
     while (1) {
-        // 这里可以执行其他业务逻辑...
-        for (volatile int i = 0; i < 1000000; i++);
+        safe_print("[App Task] Running background job...\n");
+        
+        // 模拟耗时任务完成，进入深度休眠 2000ms (2秒)
+        Scheduler::instance().sleep(2000);
     }
 }
 
 extern "C" void kernel_main(void) {
     uart_init();
     KernelHeap::instance().init(&_heap_start, &_heap_end);
-    
-    uart_puts("\n========================================\n");
-    uart_puts("   auroraOS SoftBus Subsystem Booting...\n");
-    uart_puts("========================================\n");
-
-    // 1. 初始化软总线
     SoftBus::instance().init();
 
-    // 2. 将系统能力注册为“微服务”暴露给总线
+    // 修改 SoftBus 的回调，使用安全打印
     SoftBus::instance().register_service("PING", [](const char* payload) {
-        uart_puts(">> [RPC Exec] PING matched! Sending PONG...\n");
+        safe_print(">> [RPC Exec] PING matched! Sending PONG...\n");
+        
+        uart_mutex.lock();
         SoftBus::instance().send_request("PONG", payload);
+        uart_mutex.unlock();
     });
 
     SoftBus::instance().register_service("SYSINFO", [](const char* payload) {
         (void)payload;
-        uart_puts(">> [RPC Exec] Fetching system info...\n");
+        safe_print(">> [RPC Exec] Fetching system info...\n");
+        uart_mutex.lock();
         SoftBus::instance().send_request("INFO", "auroraOS_v0.1_Active");
+        uart_mutex.unlock();
     });
 
-    uart_puts("[SoftBus]: RPC Services [PING], [SYSINFO] mounted.\n");
+    safe_print("\n========================================\n");
+    safe_print(" auroraOS Upgraded: Sleep & Mutex Active\n");
+    safe_print("========================================\n");
 
-    // 3. 动态分配栈空间并起飞多线程
     Scheduler& sched = Scheduler::instance();
     sched.init();
 
@@ -68,10 +76,9 @@ extern "C" void kernel_main(void) {
 
     g_current_tcb_ptr = sched.get_current_tcb();
 
-    // 启动系统滴答时钟并切入线程环境
     volatile uint32_t* syst_ctrl = reinterpret_cast<volatile uint32_t*>(0xE000E010);
     volatile uint32_t* syst_load = reinterpret_cast<volatile uint32_t*>(0xE000E014);
-    *syst_load = (SYSCLK_FREQ / 1000) - 1;
+    *syst_load = (SYSCLK_FREQ / 1000) - 1; // 1ms Tick
     *syst_ctrl = (1 << 2) | (1 << 1) | (1 << 0);
 
     __asm__ volatile (
