@@ -12,6 +12,7 @@ set(SOURCES
     kernel.cpp
     interrupts.cpp
     memory.cpp
+    softbus.cpp
 )
 
 add_executable(auroraOS.elf ${SOURCES}

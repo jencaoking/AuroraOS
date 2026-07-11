@@ -3,94 +3,86 @@
 #include "interrupts.hpp"
 #include "task.hpp"
 #include "memory.hpp"
+#include "softbus.hpp"
 
-// 声明链接脚本定义的符号
 extern "C" {
     extern uint32_t _heap_start;
     extern uint32_t _heap_end;
 }
 
-// 专门用来测试动态构建的 C++ 类
-class DummyComponent {
-private:
-    uint32_t id;
-public:
-    DummyComponent(uint32_t val) : id(val) {
-        uart_puts("    [C++ Constructor]: DummyComponent instance allocated via 'new'!\n");
+// ==========================================
+// 软总线守护线程 (Daemon Task)
+// ==========================================
+extern "C" void bus_daemon_task(void) {
+    while (1) {
+        // 持续剥离和解析总线上的协议帧
+        SoftBus::instance().poll();
+        
+        // 防止独占 CPU，简单延时让出（后续可以替换为线程 sleep 机制）
+        for (volatile int i = 0; i < 5000; i++);
     }
-    void do_work() {
-        uart_puts("    [C++ Method]: Method invoked dynamically via Heap object.\n");
+}
+
+// 模拟另外一个前台业务线程
+extern "C" void app_task(void) {
+    while (1) {
+        // 这里可以执行其他业务逻辑...
+        for (volatile int i = 0; i < 1000000; i++);
     }
-};
+}
 
 extern "C" void kernel_main(void) {
     uart_init();
+    KernelHeap::instance().init(&_heap_start, &_heap_end);
     
     uart_puts("\n========================================\n");
-    uart_puts("   auroraOS Memory Init -- Heap Testing\n");
+    uart_puts("   auroraOS SoftBus Subsystem Booting...\n");
     uart_puts("========================================\n");
 
-    // 1. 初始化内核堆
-    KernelHeap::instance().init(&_heap_start, &_heap_end);
-    uart_puts("[Kernel Memory]: Kernel Heap Manager linked successfully.\n");
+    // 1. 初始化软总线
+    SoftBus::instance().init();
 
-    // 2. 【核心测试】在裸机里大步执行标准 C++ 动态分配
-    uart_puts("[Kernel Test]: Requesting dynamic object...\n");
-    DummyComponent* my_comp = new DummyComponent(42);
-    my_comp->do_work();
+    // 2. 将系统能力注册为“微服务”暴露给总线
+    SoftBus::instance().register_service("PING", [](const char* payload) {
+        uart_puts(">> [RPC Exec] PING matched! Sending PONG...\n");
+        SoftBus::instance().send_request("PONG", payload);
+    });
 
-    // 3. 【核心测试】用完后手动安全销毁
-    delete my_comp;
-    uart_puts("[Kernel Test]: Object safely deleted via 'delete'.\n\n");
+    SoftBus::instance().register_service("SYSINFO", [](const char* payload) {
+        (void)payload;
+        uart_puts(">> [RPC Exec] Fetching system info...\n");
+        SoftBus::instance().send_request("INFO", "auroraOS_v0.1_Active");
+    });
 
-    // 4. 【多任务升级】现在连任务栈都可以不用静态死分配了，直接动态 new 出来！
+    uart_puts("[SoftBus]: RPC Services [PING], [SYSINFO] mounted.\n");
+
+    // 3. 动态分配栈空间并起飞多线程
     Scheduler& sched = Scheduler::instance();
     sched.init();
 
-    uint32_t* task1_dyn_stack = new uint32_t[256];
-    uint32_t* task2_dyn_stack = new uint32_t[256];
-
-    // 外部定义的任务 task1 和 task2 逻辑保持不变（见上一步代码）
-    extern void task1(void);
-    extern void task2(void);
+    uint32_t* daemon_stack = new uint32_t[256];
+    uint32_t* app_stack = new uint32_t[256];
     
-    sched.create_task(task1, task1_dyn_stack, 256 * sizeof(uint32_t));
-    sched.create_task(task2, task2_dyn_stack, 256 * sizeof(uint32_t));
+    sched.create_task(bus_daemon_task, daemon_stack, 256 * sizeof(uint32_t));
+    sched.create_task(app_task, app_stack, 256 * sizeof(uint32_t));
 
     g_current_tcb_ptr = sched.get_current_tcb();
 
-    // 启动系统滴答时钟 SysTick（保持原样）...
+    // 启动系统滴答时钟并切入线程环境
     volatile uint32_t* syst_ctrl = reinterpret_cast<volatile uint32_t*>(0xE000E010);
     volatile uint32_t* syst_load = reinterpret_cast<volatile uint32_t*>(0xE000E014);
     *syst_load = (SYSCLK_FREQ / 1000) - 1;
     *syst_ctrl = (1 << 2) | (1 << 1) | (1 << 0);
 
-    // 汇编切入多任务（保持原样）...
     __asm__ volatile (
         "msr psp, %0\n\t"
         "mov r0, #2\n\t"
         "msr control, r0\n\t"
         "isb\n\t"
         "cpsie i\n\t"
-        "bl task1\n\t"
+        "bl bus_daemon_task\n\t"
         : : "r"(g_current_tcb_ptr->stack_ptr) : "r0", "memory"
     );
 
     while (1) {}
-}
-
-// 任务 1：不断输出 A
-extern "C" void task1(void) {
-    while (1) {
-        uart_putc('A');
-        for (volatile int i = 0; i < 50000; i++); 
-    }
-}
-
-// 任务 2：不断输出 B
-extern "C" void task2(void) {
-    while (1) {
-        uart_putc('B');
-        for (volatile int i = 0; i < 50000; i++);
-    }
 }

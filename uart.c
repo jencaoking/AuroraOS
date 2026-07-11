@@ -32,3 +32,12 @@ void uart_puts(const char *s)
         uart_putc(*s++);
     }
 }
+
+// 非阻塞读取：如果有数据返回 1 并填入字符，否则立即返回 0
+int uart_getc_nb(char *c) {
+    if (UART0_FR & UART_FR_RXFE) {
+        return 0; // 接收 FIFO 为空，直接返回
+    }
+    *c = (char)(UART0_DR & 0xFF);
+    return 1;
+}

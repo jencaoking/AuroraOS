@@ -208,6 +208,30 @@ memory.cpp.s:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles\auroraOS.elf.dir\build.make CMakeFiles/auroraOS.elf.dir/memory.cpp.s
 .PHONY : memory.cpp.s
 
+softbus.obj: softbus.cpp.obj
+.PHONY : softbus.obj
+
+# target to build an object file
+softbus.cpp.obj:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles\auroraOS.elf.dir\build.make CMakeFiles/auroraOS.elf.dir/softbus.cpp.obj
+.PHONY : softbus.cpp.obj
+
+softbus.i: softbus.cpp.i
+.PHONY : softbus.i
+
+# target to preprocess a source file
+softbus.cpp.i:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles\auroraOS.elf.dir\build.make CMakeFiles/auroraOS.elf.dir/softbus.cpp.i
+.PHONY : softbus.cpp.i
+
+softbus.s: softbus.cpp.s
+.PHONY : softbus.s
+
+# target to generate assembly for a file
+softbus.cpp.s:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles\auroraOS.elf.dir\build.make CMakeFiles/auroraOS.elf.dir/softbus.cpp.s
+.PHONY : softbus.cpp.s
+
 uart.obj: uart.c.obj
 .PHONY : uart.obj
 
@@ -251,6 +275,9 @@ help:
 	@echo ... memory.obj
 	@echo ... memory.i
 	@echo ... memory.s
+	@echo ... softbus.obj
+	@echo ... softbus.i
+	@echo ... softbus.s
 	@echo ... uart.obj
 	@echo ... uart.i
 	@echo ... uart.s
