@@ -27,4 +27,15 @@ public:
     }
 };
 
+// CP.20: Use RAII, never plain lock()/unlock()
+struct LockGuard {
+    Mutex& m_;
+    explicit LockGuard(Mutex& m) : m_(m) { m_.lock(); }
+    ~LockGuard() { m_.unlock(); }
+    
+    // Non-copyable
+    LockGuard(const LockGuard&) = delete;
+    LockGuard& operator=(const LockGuard&) = delete;
+};
+
 #endif

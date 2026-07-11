@@ -3,6 +3,7 @@
 
 #include <stdint.h>
 #include <stddef.h>
+#include "mutex.hpp"
 
 class KernelHeap {
 private:
@@ -14,6 +15,7 @@ private:
 
     BlockHeader* head_block;
     size_t total_free_memory;
+    Mutex heap_mutex_;        // 保护整个全局堆的互斥锁
 
 public:
     static KernelHeap& instance() {
@@ -40,6 +42,7 @@ public:
 
     // 分配内存
     void* allocate(size_t size) {
+        LockGuard lock(heap_mutex_); // CP.20: RAII 线程安全保护
         // 4字节对齐
         size = (size + 3) & ~3;
         size_t required_space = size + sizeof(BlockHeader);
@@ -72,6 +75,7 @@ public:
     // 释放内存
     void deallocate(void* ptr) {
         if (!ptr) return;
+        LockGuard lock(heap_mutex_); // CP.20: RAII 线程安全保护
 
         BlockHeader* target = reinterpret_cast<BlockHeader*>(
             reinterpret_cast<uintptr_t>(ptr) - sizeof(BlockHeader)
