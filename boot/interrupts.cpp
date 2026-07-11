@@ -72,29 +72,28 @@ extern "C" {
 //                       * 同级任务轮转时间片
 // ================================================================
 
+#include "frame_scheduler.hpp"
+
+extern "C" bool frame_scheduler_is_task_allowed(uint8_t priority) {
+    return FrameScheduler::instance().is_task_allowed(priority);
+}
+
 void SysTick_Handler(void) {
     tick_count++;
     
     // 1. 驱动软件定时器引擎
     TimerManager::instance().on_tick();
 
-    // 2. 工作队列测试：每 3 秒从中断环境提交一个耗时任务
-    if (tick_count % 3000 == 0) {
-        WorkQueue::instance().submit_from_isr([](void* arg) {
-            sys_print("\r\n[WorkQueue Daemon] Background job started. Simulating heavy work...\r\n");
-            Scheduler::instance().sleep(500); 
-            sys_print("[WorkQueue Daemon] Heavy job completed!\r\n");
-        }, nullptr);
-    }
+    // 2. 【核心注入】驱动蓝河帧感知时钟窗 (计算 33ms 边界)
+    FrameScheduler::instance().on_tick();
 
     Scheduler& sched = Scheduler::instance();
-
-    // Step 1: 更新所有休眠任务的倒计时
     sched.tick_update();
-
-    // Step 2: 周期性调度（含优先级抢占检测）
-    // schedule() 内部会原子地更新 g_current_tcb_ptr / g_next_tcb_ptr 并 pending PendSV
-    if (tick_count % 10 == 0) {
-        sched.schedule();
+    
+    // 每 5ms 触发一次高频时间片重新评估，保障 30fps 窗口内的微秒级响应
+    if (tick_count % 5 == 0) {
+        g_current_tcb_ptr = sched.get_current_tcb();
+        sched.schedule(); 
+        g_next_tcb_ptr = sched.get_current_tcb();
     }
 }

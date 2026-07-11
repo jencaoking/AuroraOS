@@ -13,6 +13,7 @@
 #include "../net/eth_driver.hpp"
 #include "task_notify.hpp"
 #include "signal.hpp"
+#include "frame_scheduler.hpp"
 extern Mutex uart_mutex;
 #include "mpu.hpp"
 
@@ -280,6 +281,47 @@ void sender_task(void) {
     }
 }
 
+// ==========================================
+// 1. 手表 UI 表盘渲染线程 (CRITICAL 帧内优享)
+// ==========================================
+void ui_render_task(void) {
+    int fd = open("/dev/uart0", 0);
+    write(fd, "[BlueOS UI] Render Engine Online. Locked to 30FPS (33ms window).\r\n", 66);
+    close(fd);
+
+    while (true) {
+        fd = open("/dev/uart0", 0);
+        write(fd, "\r\n[+ 0ms] 🟢 V-Sync! UI Intra-Frame Render START...\r\n", 54);
+        close(fd);
+
+        // 模拟高强度的图形界面脏区域绘制、字模排版，耗时约 12ms
+        for (volatile int i = 0; i < 600000; i++); 
+
+        fd = open("/dev/uart0", 0);
+        write(fd, "[+12ms] 🏁 UI Render DONE! Unlocking Inter-Frame CPU budget...\r\n", 66);
+        close(fd);
+
+        // 向 FrameScheduler 上报渲染结束，立刻让出算力
+        FrameScheduler::instance().wait_for_next_frame();
+    }
+}
+
+// ==========================================
+// 2. 后台健康传感器数据处理 (NORMAL 帧间执行)
+// ==========================================
+void sensor_log_task(void) {
+    while (true) {
+        int fd = open("/dev/uart0", 0);
+        write(fd, "        ⚙️ [Inter-Frame] Background Sensor Log Running in 21ms gap!\r\n", 71);
+        close(fd);
+
+        // 模拟较长的传感器卡尔曼滤波数学运算
+        for (volatile int i = 0; i < 400000; i++);
+        
+        Scheduler::instance().sleep(10); // 稍微出让一下，让打印更工整
+    }
+}
+
 // =========================================================================
 // [核心系统进程] 黑客应用任务
 // ==========================================
@@ -396,6 +438,16 @@ extern "C" void kernel_main(void) {
     TaskControlBlock* rx_tcb = Scheduler::instance().create_task(receiver_task, new uint32_t[STACK_SIZE_TEST], STACK_SIZE_TEST*sizeof(uint32_t), TaskPriority::Normal);
     if (rx_tcb) g_receiver_task_id = rx_tcb->id;
     Scheduler::instance().create_task(sender_task, new uint32_t[STACK_SIZE_TEST], STACK_SIZE_TEST*sizeof(uint32_t), TaskPriority::Normal);
+
+    // 6. 蓝河 Frame-Aware Scheduler 任务注册
+    uint32_t* ui_stack = new uint32_t[STACK_SIZE_TEST];
+    uint32_t ui_tid = FrameScheduler::instance().create_frame_task(ui_render_task, ui_stack, STACK_SIZE_TEST * sizeof(uint32_t), FramePriority::CRITICAL);
+
+    uint32_t* sensor_stack = new uint32_t[STACK_SIZE_TEST];
+    FrameScheduler::instance().create_frame_task(sensor_log_task, sensor_stack, STACK_SIZE_TEST * sizeof(uint32_t), FramePriority::NORMAL);
+
+    // 【蓝河引擎绑定】初始化 30FPS 调度器，并绑定 UI 主任务的 ID
+    FrameScheduler::instance().init(30, ui_tid);
 
 #ifdef CONFIG_TIMER_MANAGER
     // 4. 定时器守护进程与测试 App

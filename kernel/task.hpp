@@ -5,6 +5,8 @@
 #include <stddef.h>
 #include "arch_api.hpp" // 引入底层架构 HAL 接口
 
+extern "C" bool frame_scheduler_is_task_allowed(uint8_t priority);
+
 // ============================================================
 // 1. 定义标准 RTOS 优先级阶梯 (数值越大，优先级越高)
 //    遵循 C++ Core Guidelines Enum.3: 使用 enum class 强类型枚举
@@ -151,9 +153,15 @@ public:
         // ── 阶段一：寻找最高可运行优先级 ──────────────────────────────────
         TaskPriority max_prio = TaskPriority::Idle;
         for (uint32_t i = 0; i < task_count; i++) {
-            if (tasks[i].state != TaskState::Sleeping &&
-                tasks[i].current_priority > max_prio) {
-                max_prio = tasks[i].current_priority;
+            if (tasks[i].state != TaskState::Sleeping && tasks[i].state != TaskState::Blocked_On_Notify) {
+                // 【蓝河帧感知拦截】如果属于帧间非关键任务，但在本帧的 UI 渲染还没结束时，强行跳过！
+                if (!frame_scheduler_is_task_allowed(static_cast<uint8_t>(tasks[i].current_priority))) {
+                    continue;
+                }
+
+                if (tasks[i].current_priority > max_prio) {
+                    max_prio = tasks[i].current_priority;
+                }
             }
         }
 
@@ -161,9 +169,12 @@ public:
         uint32_t next_task = current_task_index;
         for (uint32_t i = 0; i < task_count; i++) {
             next_task = (next_task + 1) % task_count;
-            if (tasks[next_task].state != TaskState::Sleeping &&
+            if (tasks[next_task].state != TaskState::Sleeping && tasks[next_task].state != TaskState::Blocked_On_Notify &&
                 tasks[next_task].current_priority == max_prio) {
-                break;
+                // 【蓝河帧感知拦截】同级查找也需校验
+                if (frame_scheduler_is_task_allowed(static_cast<uint8_t>(tasks[next_task].current_priority))) {
+                    break;
+                }
             }
         }
 
