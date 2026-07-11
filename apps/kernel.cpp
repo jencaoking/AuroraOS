@@ -178,6 +178,12 @@ extern "C" void kernel_main(void) {
     sys_print("[lwIP] Initializing TCP/IP Engine...\r\n");
     tcpip_init(tcpip_init_done, nullptr);
 
+    // 初始化 SysTick 硬件定时器，产生 1ms 心跳中断
+    volatile uint32_t* syst_ctrl = reinterpret_cast<volatile uint32_t*>(0xE000E010);
+    volatile uint32_t* syst_load = reinterpret_cast<volatile uint32_t*>(0xE000E014);
+    *syst_load = (SYSCLK_FREQ / 1000) - 1; // 1ms 计数周期
+    *syst_ctrl = (1 << 2) | (1 << 1) | (1 << 0); // 使用内核时钟，开启中断，使能定时器
+
     // 启动调度器：正确引导第一个任务（通过 PSP/bx 跳入，不破坏栈帧）
     // 调度器从此接管 CPU，永不返回
     Scheduler::instance().start();
