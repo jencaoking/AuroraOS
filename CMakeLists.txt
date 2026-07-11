@@ -31,3 +31,10 @@ target_include_directories(auroraOS.elf PRIVATE
     ${CMAKE_SOURCE_DIR}/vfs
     ${CMAKE_SOURCE_DIR}/apps
 )
+
+target_link_options(auroraOS.elf PRIVATE
+    -T ${CMAKE_SOURCE_DIR}/config/linker.ld
+    -nostartfiles
+    -nostdlib
+    --specs=nosys.specs
+)

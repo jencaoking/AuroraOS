@@ -2,35 +2,28 @@
 #define MUTEX_HPP
 
 #include "task.hpp"
+#include "syscall.hpp"
 
 class Mutex {
 private:
-    bool locked_ = false;
-
-    // 内联汇编：关闭/开启全局中断
-    inline void disable_interrupts() { __asm__ volatile ("cpsid i" : : : "memory"); }
-    inline void enable_interrupts()  { __asm__ volatile ("cpsie i" : : : "memory"); }
+    volatile bool locked_ = false;
 
 public:
     void lock() {
         while (true) {
-            disable_interrupts();
-            if (!locked_) {
-                locked_ = true;
-                enable_interrupts();
+            // 使用 GCC 内置原子操作，在特权和非特权模式下均安全生效
+            if (!__sync_lock_test_and_set(&locked_, true)) {
                 return; // 成功获取锁
             }
-            enable_interrupts();
             
-            // 锁被占用，当前线程主动让出 CPU 给其他线程（Yield）
-            Scheduler::instance().schedule();
+            // 锁被占用，非特权态无法直接写 ICSR 触发 PendSV，
+            // 必须通过系统调用安全地让出 CPU
+            sys_yield();
         }
     }
 
     void unlock() {
-        disable_interrupts();
-        locked_ = false;
-        enable_interrupts();
+        __sync_lock_release(&locked_);
     }
 };
 
