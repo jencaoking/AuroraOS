@@ -16,6 +16,7 @@ extern "C" {
 #define O_TRUNC     0x0400
 #define O_APPEND    0x0800
 
+#ifndef AURORA_HOST_TEST
 // 标准文件操作接口
 int open(const char* path, int flags);
 int close(int fd);
@@ -23,6 +24,7 @@ int read(int fd, void* buf, size_t count);
 int write(int fd, const void* buf, size_t count);
 int ioctl(int fd, int request, void* arg);
 int lseek(int fd, int offset, int whence);
+#endif
 
 // 延时接口
 void sleep(uint32_t seconds);
