@@ -64,6 +64,9 @@ bool StellarisEth::init() {
 
 // 从网卡硬件 FIFO 读取以太网帧
 int StellarisEth::receive_frame(uint8_t* buffer, int max_len) {
+    // 检查缓冲区合法性
+    if (max_len <= 0) return 0;
+
     // 检查是否有数据帧到达 (读取 MAC_RIS 的 Bit 0: RXINT)
     if ((*mac_ris_ & MAC_RIS_RXINT) == 0) {
         return 0; // FIFO 为空
@@ -72,7 +75,12 @@ int StellarisEth::receive_frame(uint8_t* buffer, int max_len) {
     // Stellaris 接收 FIFO 的第一个字是：帧长度 (减去 CRC 的实际数据大小)
     uint32_t frame_len = *mac_data_;
     if (frame_len > static_cast<uint32_t>(max_len) || frame_len == 0) {
-        // 数据帧异常，清除接收中断标志并丢弃
+        // [安全加固] 数据帧异常，必须排空 FIFO 里的这包数据，否则硬件 MAC 会死锁
+        int words_to_discard = (frame_len + 3) / 4;
+        for (int i = 0; i < words_to_discard; i++) {
+            volatile uint32_t discard = *mac_data_;
+            (void)discard;
+        }
         *mac_iack_ = MAC_IACK_RXINT;
         return 0;
     }

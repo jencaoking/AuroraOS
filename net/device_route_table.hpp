@@ -46,6 +46,9 @@ public:
     // 将解析出的新设备动态注册到内核路由表中
     // ========================================================
     void register_or_update_device(const char* ip, const char* dev_id, const char* cap, uint32_t current_tick) {
+        // [安全加固] 防止从恶意伪造报文解析出的空指针导致的 Segfault
+        if (!ip || !dev_id || !cap) return;
+        
         int empty_slot = -1;
 
         // 1. 查重：如果设备已存在，更新心跳时间
