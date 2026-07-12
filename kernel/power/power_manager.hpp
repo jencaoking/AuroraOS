@@ -7,6 +7,7 @@
 #include "board.h"
 #include "../../drivers/sensor/sensor_framework.hpp"
 #include "../../drivers/display/st7789_driver.hpp"
+#include "../../drivers/power/charging_manager.hpp"
 #include "../frame_scheduler_v2.hpp"
 #include "../task.hpp"
 #include "../timer.hpp"
@@ -146,6 +147,21 @@ public:
             // 如果满足 1g 防抖抬腕模式识别，瞬间拉起系统到 Active
             if (wake_detector_.process_accel_z(z_mg, delta_ticks)) {
                 transition_to(PowerState::ACTIVE);
+            }
+        }
+
+        // 3. 充电管理器级联轮询与低电量保护
+        ChargingManager::instance().on_tick(delta_ticks);
+
+        // 如果检测到 VBUS 刚刚插入，强制唤醒屏幕并转入活跃状态
+        if (ChargingManager::instance().has_just_plugged()) {
+            transition_to(PowerState::ACTIVE);
+        }
+
+        // 极低电量且未插电时，强制切断非必要外设，进入 CRITICAL 状态自保
+        if (ChargingManager::instance().is_critical_low()) {
+            if (current_state_ != PowerState::CRITICAL) {
+                transition_to(PowerState::CRITICAL);
             }
         }
     }

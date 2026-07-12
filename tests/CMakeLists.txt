@@ -72,6 +72,7 @@ set(TEST_SOURCES
     unit/test_scheduler.cpp
     unit/test_vfs.cpp
     unit/test_renderer2d.cpp
+    unit/test_power.cpp
 )
 
 # ---------------------------------------------------------------------------
@@ -93,6 +94,7 @@ target_include_directories(aurora_tests
         "${AURORA_ROOT}/vfs"                  # vfs.hpp
         "${AURORA_ROOT}/syscall"              # syscall.hpp (shadowed by stubs)
         "${AURORA_ROOT}/drivers/display"      # framebuffer.hpp, renderer2d.hpp
+        "${AURORA_ROOT}/drivers/power"        # charging_manager.hpp
 )
 
 target_link_libraries(aurora_tests
