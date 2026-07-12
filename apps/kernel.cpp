@@ -20,6 +20,8 @@
 #include "../drivers/input/input_event.hpp"  // 引入输入协议
 #include "../drivers/sensor/sensor_framework.hpp" // 传感器框架
 #include "../ui/complications.hpp"    // 小组件引擎
+#include "../kernel/app_lifecycle.hpp" // 应用生命周期管理
+#include "../ai/intent_engine.hpp"     // AI 意图引擎
 #include "../drivers/storage/flash_device.hpp"
 #include "../vfs/photon_cache.hpp"
 #include "../vfs/littlefs_vnode.hpp"
@@ -348,6 +350,41 @@ LittleFsAdapter  g_lfs(g_photon_cache, 4096, 128);    // LittleFS 日志文件�
 LfsFileNode      g_step_log(g_lfs);                   // 运动步数持久化日志文件
 
 // ==========================================
+// Phase 3: AI 意图引擎与应用生命周期守护任务
+// ==========================================
+AppControlBlock g_fitness_app = {0, AppState::NOT_RUNNING, "FitnessTracker"};
+
+void system_daemon_task(void) {
+    int console_fd = open("/dev/uart0", 0);
+    write(console_fd, "\r\n[AI] Intent Engine & App Lifecycle Manager Online.\r\n", 54);
+    close(console_fd);
+
+    while (true) {
+        // 1. 意图引擎监控传感器变化
+        IntentEngine::process_sensors(g_fitness_app);
+        
+        Scheduler::instance().sleep(500); // 采样间隔
+    }
+}
+
+void fitness_app_task(void) {
+    while (true) {
+        if (g_fitness_app.state == AppState::FOREGROUND) {
+            int fd = open("/dev/uart0", 0);
+            if (fd >= 0) {
+                write(fd, "  🏃 [Fitness App] Running in FOREGROUND! Drawing UI...\r\n", 59);
+                close(fd);
+            }
+            Scheduler::instance().sleep(500); 
+        } else if (g_fitness_app.state == AppState::BACKGROUND) {
+            Scheduler::instance().sleep(1000); 
+        } else {
+            Scheduler::instance().sleep(2000);
+        }
+    }
+}
+
+// ==========================================
 // 模拟手表高频写日志任务 (验证光子缓冲写聚合)
 // ==========================================
 void storage_test_task(void) {
@@ -534,6 +571,15 @@ extern "C" void kernel_main(void) {
     // 7. 光子存储写聚合测试任务
     uint32_t* storage_stack = new uint32_t[STACK_SIZE_SHELL];
     Scheduler::instance().create_task(storage_test_task, storage_stack, STACK_SIZE_SHELL * sizeof(uint32_t), TaskPriority::Normal);
+
+    // 8. Phase 3: AI 意图引擎守护进程与 Fitness App
+    Scheduler::instance().create_task(system_daemon_task, new uint32_t[STACK_SIZE_DAEMON], STACK_SIZE_DAEMON * sizeof(uint32_t), TaskPriority::High);
+    
+    TaskControlBlock* fitness_tcb = Scheduler::instance().create_task(fitness_app_task, new uint32_t[STACK_SIZE_DAEMON], STACK_SIZE_DAEMON * sizeof(uint32_t), TaskPriority::Low);
+    if (fitness_tcb) {
+        g_fitness_app.tid = fitness_tcb->id;
+        g_fitness_app.state = AppState::BACKGROUND;
+    }
 
     // 【蓝河引擎绑定】初始化 30FPS 调度器，并绑定 UI 主任务的 ID
     FrameScheduler::instance().init(30, ui_tid);
