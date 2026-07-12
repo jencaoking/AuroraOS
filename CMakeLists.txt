@@ -84,3 +84,13 @@ target_link_options(auroraOS.elf PRIVATE
     --specs=nano.specs
     --specs=nosys.specs
 )
+
+# =====================================================================
+# 6. 生成固件产物与内存占用报告
+# =====================================================================
+add_custom_command(TARGET auroraOS.elf POST_BUILD
+    COMMAND arm-none-eabi-objcopy -O binary auroraOS.elf auroraOS.bin
+    COMMAND arm-none-eabi-objcopy -O ihex auroraOS.elf auroraOS.hex
+    COMMAND arm-none-eabi-size auroraOS.elf
+    COMMENT "Building raw binary and hex files, and printing size..."
+)
