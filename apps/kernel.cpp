@@ -110,13 +110,25 @@ Mutex uart_mutex;
 #include "uart_device.hpp"
 #include "procfs.hpp"
 
-// =========================================================================
-// [核心系统进程] 低功耗空闲任务 (优先级最低，永远保持 Ready 状态)
-// 当无任何业务任务可运行时，CPU 落入此处进入低功耗等待态
-// =========================================================================
-void sys_idle_task(void) {
+#include "power_manager.hpp" // 引入电源管理器
+
+// ==========================================
+// 绝对最低优先级的空闲任务 (Priority = 0)
+// 只有当所有业务、网络、渲染任务都在睡觉时，它才会被调度执行
+// ==========================================
+void idle_task_entry(void) {
+    int console_fd = open("/dev/uart0", 0);
+    write(console_fd, "[Power] Idle Task Online. Tickless Engine Active.\n", 50);
+    close(console_fd);
+
     while (true) {
-        Arch::wait_for_interrupt(); // 挂起 CPU 直到下一个中断到来，节省能耗
+        // 1. 向调度器询问：我们距离下一个任务醒来还有多久？
+        uint32_t expected_idle = Scheduler::instance().get_expected_idle_ticks();
+
+        // 2. 将预测时间交给电源管理器，由它决定是浅睡还是彻底关停 SysTick (Tickless)
+        if (expected_idle > 0 && expected_idle != 0xFFFFFFFF) {
+            PowerManager::instance().enter_idle_state(expected_idle);
+        }
     }
 }
 
@@ -546,9 +558,9 @@ extern "C" void kernel_main(void) {
     uint32_t* shell_stack = new uint32_t[STACK_SIZE_SHELL];
 
     // 1. 空闲进程：优先级最低，负责 CPU 低功耗兜底
-    if (!Scheduler::instance().create_task(sys_idle_task, idle_stack, STACK_SIZE_IDLE * sizeof(uint32_t),
+    if (!Scheduler::instance().create_task(idle_task_entry, idle_stack, STACK_SIZE_IDLE * sizeof(uint32_t),
         TaskPriority::Idle)) {
-        sys_print("[Kernel] FATAL: failed to spawn sys_idle_task!\r\n");
+        sys_print("[Kernel] FATAL: failed to spawn idle_task_entry!\r\n");
     }
 
     // 2. 交互终端：高优先级响应用户键盘

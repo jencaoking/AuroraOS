@@ -216,6 +216,40 @@ public:
         }
     }
 
+    // 1. 预测未来：扫描所有休眠中的任务，找出最快要醒来的那个时间差
+    uint32_t get_expected_idle_ticks() {
+        uint32_t min_ticks = 0xFFFFFFFF; // 初始设为无限大
+        
+        for (uint32_t i = 0; i < task_count; i++) {
+            if (tasks[i].state == TaskState::Sleeping) {
+                if (tasks[i].sleep_ticks > 0 && tasks[i].sleep_ticks < min_ticks) {
+                    min_ticks = tasks[i].sleep_ticks;
+                }
+            }
+        }
+        
+        // 同时还要去查一下软件定时器管理器（TimerManager），看有没有定时器更早到期
+        // uint32_t timer_ticks = TimerManager::instance().get_next_expire_ticks();
+        // if (timer_ticks < min_ticks) min_ticks = timer_ticks;
+
+        return min_ticks;
+    }
+
+    // 2. 补偿跳过的时间：Tickless 睡眠醒来后，批量扣除休眠任务的等待时间
+    void compensate_ticks(uint32_t skipped_ticks) {
+        for (uint32_t i = 0; i < task_count; i++) {
+            if (tasks[i].state == TaskState::Sleeping && tasks[i].sleep_ticks > 0) {
+                if (tasks[i].sleep_ticks > skipped_ticks) {
+                    tasks[i].sleep_ticks -= skipped_ticks;
+                } else {
+                    tasks[i].sleep_ticks = 0;
+                    tasks[i].state = TaskState::Ready;
+                }
+            }
+        }
+        // 注意：全局的系统 tick 计数器也需要加上 skipped_ticks
+    }
+
     // 遵循 F.16: 返回裸指针仅表示非所有权观察（调度器拥有 TCB 数组）
     TaskControlBlock* get_current_tcb() { return &tasks[current_task_index]; }
 

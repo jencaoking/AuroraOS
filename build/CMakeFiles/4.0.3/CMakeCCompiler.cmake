@@ -23,7 +23,7 @@ set(CMAKE_C_SIMULATE_VERSION "")
 
 
 
-set(CMAKE_AR "J:/CODE/arm-gnu-toolchain/bin/arm-none-eabi-ar.exe")
+set(CMAKE_AR "arm-none-eabi-ar")
 set(CMAKE_C_COMPILER_AR "J:/CODE/arm-gnu-toolchain/bin/arm-none-eabi-gcc-ar.exe")
 set(CMAKE_RANLIB "J:/CODE/arm-gnu-toolchain/bin/arm-none-eabi-ranlib.exe")
 set(CMAKE_C_COMPILER_RANLIB "J:/CODE/arm-gnu-toolchain/bin/arm-none-eabi-gcc-ranlib.exe")
