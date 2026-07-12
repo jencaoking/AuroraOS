@@ -121,7 +121,7 @@ jobs:
           - board: lm3s6965-qb
             cmake_extra: ""
           - board: miband8
-            cmake_extra: "-DCMAKE_TOOLCHAIN_FILE=config/toolchain_miband.cmake"
+            cmake_extra: ""
 
     steps:
       - uses: actions/checkout@v4

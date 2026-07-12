@@ -101,7 +101,7 @@ public:
         tcb.base_priority = prio;
         tcb.current_priority = prio;
         tcb.entry_point = task_entry;
-        tcb.stack_base = reinterpret_cast<uint32_t>(stack_space);
+        tcb.stack_base = static_cast<uint32_t>(reinterpret_cast<uintptr_t>(stack_space));
         tcb.size_pow2 = size_pow2;
 
         // 初始化任务通知与信号管理
