@@ -90,7 +90,7 @@ public:
         } else {
             // 保护机制：如果强行在 0fps 状态下调用，直接将自身剥夺就绪态并挂起
             disable_interrupts();
-            Scheduler::instance().get_current_tcb()->state = TaskState::Sleeping;
+            Scheduler::instance().get_current_tcb()->state = TaskState::Suspended;
             enable_interrupts();
             Scheduler::instance().schedule();
         }

@@ -29,7 +29,7 @@ struct AppControlBlock {
                 tcb->current_priority = TaskPriority::Low;  // 降级为后台处理级
                 break;
             case AppState::SUSPENDED:
-                tcb->state = TaskState::Sleeping; // 强行挂起调度
+                tcb->state = TaskState::Suspended; // 强行永久挂起调度
                 break;
             default: break;
         }

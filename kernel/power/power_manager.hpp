@@ -77,30 +77,27 @@ private:
 
     // 硬件降级与恢复路由机制
     void apply_state_hardware(PowerState state) {
-        /*
-        // 伪代码：实际调用需对接具体外设驱动
         switch (state) {
             case PowerState::ACTIVE:
-                St7789Driver::instance().set_brightness(100);
+                // St7789Driver::instance().set_brightness(100);
                 FrameSchedulerV2::instance().set_fps(30);
                 break;
             case PowerState::DIM:
-                St7789Driver::instance().set_brightness(30);
+                // St7789Driver::instance().set_brightness(30);
                 FrameSchedulerV2::instance().set_fps(15);
                 break;
             case PowerState::IDLE:
-                St7789Driver::instance().enter_sleep();
+                // St7789Driver::instance().enter_sleep();
                 FrameSchedulerV2::instance().set_fps(1);
                 break;
             case PowerState::SLEEP:
                 FrameSchedulerV2::instance().set_fps(0); // 暂停帧推进
-                // SensorManager 关闭心率，仅保留 BHI260AP 计步与抬腕
                 break;
             case PowerState::CRITICAL:
+                FrameSchedulerV2::instance().set_fps(0);
                 // 关断除 RTC 外所有外设供电
                 break;
         }
-        */
     }
 
 public:
@@ -141,8 +138,12 @@ public:
 
         // 2. 息屏深睡期的抬腕唤醒检测联动
         if (current_state_ == PowerState::IDLE || current_state_ == PowerState::SLEEP) {
-            // 占位：从 BHI260AP 获取 Z 轴实时加速度 (单位: mg)
-            int32_t z_mg = 0; 
+            // 从加速计获取 Z 轴实时加速度 (单位: mg)
+            int32_t z_mg = 0;
+            SensorData acc_data;
+            if (SensorManager::instance().get_accel_sensor().read(&acc_data)) {
+                z_mg = acc_data.payload.accel.z;
+            }
 
             // 如果满足 1g 防抖抬腕模式识别，瞬间拉起系统到 Active
             if (wake_detector_.process_accel_z(z_mg, delta_ticks)) {

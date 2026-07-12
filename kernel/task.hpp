@@ -24,7 +24,8 @@ enum class TaskState {
     Running,
     Sleeping,
     Blocked_On_Notify,
-    Terminated
+    Terminated,
+    Suspended
 };
 
 // POSIX 标准信号定义
@@ -156,7 +157,7 @@ public:
         // ── 阶段一：寻找最高可运行优先级 ──────────────────────────────────
         TaskPriority max_prio = TaskPriority::Idle;
         for (uint32_t i = 0; i < task_count; i++) {
-            if (tasks[i].state != TaskState::Sleeping && tasks[i].state != TaskState::Blocked_On_Notify && tasks[i].state != TaskState::Terminated) {
+            if (tasks[i].state != TaskState::Sleeping && tasks[i].state != TaskState::Blocked_On_Notify && tasks[i].state != TaskState::Terminated && tasks[i].state != TaskState::Suspended) {
                 // 【蓝河帧感知拦截】如果属于帧间非关键任务，但在本帧的 UI 渲染还没结束时，强行跳过！
                 if (!frame_scheduler_is_task_allowed(static_cast<uint8_t>(tasks[i].current_priority))) {
                     continue;
@@ -173,7 +174,7 @@ public:
         bool task_found = false;
         for (uint32_t i = 0; i < task_count; i++) {
             next_task = (next_task + 1) % task_count;
-            if (tasks[next_task].state != TaskState::Sleeping && tasks[next_task].state != TaskState::Blocked_On_Notify && tasks[next_task].state != TaskState::Terminated &&
+            if (tasks[next_task].state != TaskState::Sleeping && tasks[next_task].state != TaskState::Blocked_On_Notify && tasks[next_task].state != TaskState::Terminated && tasks[next_task].state != TaskState::Suspended &&
                 tasks[next_task].current_priority == max_prio) {
                 // 【蓝河帧感知拦截】同级查找也需校验
                 if (frame_scheduler_is_task_allowed(static_cast<uint8_t>(tasks[next_task].current_priority))) {

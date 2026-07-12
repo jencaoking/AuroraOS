@@ -195,7 +195,8 @@ void receiver_task(void) {
     // 1. 绑定 POSIX SIGUSR1 信号的异步回调
     signal(SIGUSR1, [](int sig) {
         int fd = open("/dev/uart0", 0);
-        write(fd, "\r\n>>> [POSIX Signal Handler] SIGUSR1 intercepted asynchronously! <<<\r\n", 71);
+        const char msg[] = "\r\n>>> [POSIX Signal Handler] SIGUSR1 intercepted asynchronously! <<<\r\n";
+        write(fd, msg, sizeof(msg) - 1);
         close(fd);
     });
 
@@ -371,7 +372,8 @@ void ui_render_task(void) {
 void sensor_log_task(void) {
     while (true) {
         int fd = open("/dev/uart0", 0);
-        write(fd, "        ⚙️ [Inter-Frame] Background Sensor Log Running in 21ms gap!\r\n", 71);
+        const char msg[] = "        ⚙️ [Inter-Frame] Background Sensor Log Running in 21ms gap!\r\n";
+        write(fd, msg, sizeof(msg) - 1);
         close(fd);
 
         // 模拟较长的传感器卡尔曼滤波数学运算

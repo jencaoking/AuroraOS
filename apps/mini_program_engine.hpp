@@ -58,9 +58,12 @@ private:
         extern HeartRateSensor g_health_sensor;
         SensorDriver* hr_sensor = &g_health_sensor;
         if (hr_sensor) {
-            SensorData val;
-            hr_sensor->read(&val);
-            lua_pushinteger(L, val.payload.bpm); // 将心率值压入 Lua 栈返回
+            SensorData val = {}; // Zero-initialize to prevent stack leaks
+            if (hr_sensor->read(&val)) {
+                lua_pushinteger(L, val.payload.bpm); // 将心率值压入 Lua 栈返回
+            } else {
+                lua_pushinteger(L, 0); // 传感器未上电或读取失败
+            }
             return 1;
         }
         lua_pushinteger(L, 0);
@@ -111,6 +114,12 @@ public:
         // 我们裁剪了标准的 linit.c，只手动加载最核心的 base 库
         luaL_requiref(L_, "_G", luaopen_base, 1);
         lua_pop(L_, 1);
+        
+        // 彻底封堵预编译字节码沙盒逃逸漏洞：移除暴露的加载器
+        lua_pushnil(L_); lua_setglobal(L_, "load");
+        lua_pushnil(L_); lua_setglobal(L_, "loadstring");
+        lua_pushnil(L_); lua_setglobal(L_, "dofile");
+        lua_pushnil(L_); lua_setglobal(L_, "loadfile");
 
         // 将底层的 C++ 函数注册为 Lua 全局命名空间 aurora 的方法
         lua_newtable(L_);
