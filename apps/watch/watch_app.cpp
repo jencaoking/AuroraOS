@@ -43,9 +43,8 @@ void WatchApp::render_watch_face() {
     FontEngine::draw_number(10, 10, 85, FontColor::WHITE, FontSize::SMALL, render_buffer, 192); // 模拟 85% 电量
     St7789Driver::instance().write_patch(render_buffer, 192 * CHUNK_HEIGHT);
 
-    // Chunk 1 & 2: 中心巨大的时间显示
+    // Chunk 1 & 2: 中心巨大的时间显示, 跨越两块 Chunk 高度 (128px)
     St7789Driver::instance().set_window(0, CHUNK_HEIGHT, 191, CHUNK_HEIGHT*3 - 1);
-    for(int i=0; i<192*(CHUNK_HEIGHT*2); ++i) render_buffer[i] = COLOR_BG_DARK; 
     
     // 渲染时间字符串 (如 10:09)
     char time_str[6];
@@ -55,20 +54,33 @@ void WatchApp::render_watch_face() {
     time_str[3] = (simulated_time_m_ / 10) + '0';
     time_str[4] = (simulated_time_m_ % 10) + '0';
     time_str[5] = '\0';
-    FontEngine::draw_string(20, 20, time_str, FontColor::WHITE, FontSize::HUGE, render_buffer, 192);
-    St7789Driver::instance().write_patch(render_buffer, 192 * (CHUNK_HEIGHT*2));
+    
+    for(int pass = 0; pass < 2; ++pass) {
+        for(int i=0; i<192*CHUNK_HEIGHT; ++i) render_buffer[i] = COLOR_BG_DARK; 
+        
+        int16_t y_offset = -(pass * CHUNK_HEIGHT);
+        FontEngine::draw_string(20, static_cast<int16_t>(20 + y_offset), time_str, FontColor::WHITE, FontSize::HUGE, render_buffer, 192);
+        
+        St7789Driver::instance().write_patch(render_buffer, 192 * CHUNK_HEIGHT);
+    }
 
-    // Chunk 3: 底部运动健康数据区 (心率 & 步数)
+    // Chunk 3: 底部运动健康数据区 (心率 & 步数), 剩余高度 298px
     St7789Driver::instance().set_window(0, CHUNK_HEIGHT*3, 191, 489);
-    for(int i=0; i<192*(490 - CHUNK_HEIGHT*3); ++i) render_buffer[i] = COLOR_BG_DARK;
+    for(int pass = 0; pass < 5; ++pass) {
+        uint16_t current_chunk_height = (pass == 4) ? (298 % CHUNK_HEIGHT) : CHUNK_HEIGHT;
+        if (current_chunk_height == 0) continue;
+        
+        for(int i=0; i<192*current_chunk_height; ++i) render_buffer[i] = COLOR_BG_DARK;
+        
+        int16_t y_offset = -(pass * CHUNK_HEIGHT);
+        FontEngine::draw_string(20, static_cast<int16_t>(20 + y_offset), "HR:", static_cast<FontColor>(COLOR_TEXT_MUTED), FontSize::MEDIUM, render_buffer, 192);
+        FontEngine::draw_number(80, static_cast<int16_t>(20 + y_offset), current_bpm, FontColor::RED, FontSize::MEDIUM, render_buffer, 192);
 
-    FontEngine::draw_string(20, 20, "HR:", static_cast<FontColor>(COLOR_TEXT_MUTED), FontSize::MEDIUM, render_buffer, 192);
-    FontEngine::draw_number(80, 20, current_bpm, FontColor::RED, FontSize::MEDIUM, render_buffer, 192);
+        FontEngine::draw_string(20, static_cast<int16_t>(70 + y_offset), "STP:", static_cast<FontColor>(COLOR_TEXT_MUTED), FontSize::MEDIUM, render_buffer, 192);
+        FontEngine::draw_number(80, static_cast<int16_t>(70 + y_offset), current_steps, static_cast<FontColor>(COLOR_TEXT_ACCENT), FontSize::MEDIUM, render_buffer, 192);
 
-    FontEngine::draw_string(20, 70, "STP:", static_cast<FontColor>(COLOR_TEXT_MUTED), FontSize::MEDIUM, render_buffer, 192);
-    FontEngine::draw_number(80, 70, current_steps, static_cast<FontColor>(COLOR_TEXT_ACCENT), FontSize::MEDIUM, render_buffer, 192);
-
-    St7789Driver::instance().write_patch(render_buffer, 192 * (490 - CHUNK_HEIGHT*3));
+        St7789Driver::instance().write_patch(render_buffer, 192 * current_chunk_height);
+    }
 }
 
 // ========================================================
