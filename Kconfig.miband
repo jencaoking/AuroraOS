@@ -1,0 +1,116 @@
+mainmenu "auroraOS MiBand 8 (Apollo3) Configuration"
+
+config TARGET_MIBAND
+    bool
+    default y
+    help
+      Enable MiBand target adaptations.
+
+# ========================================================
+# 1. 架构与 SoC 级配置
+# ========================================================
+menu "System & Architecture"
+
+config ARCH_CORTEX_M4F
+    bool "Ambiq Apollo3 Cortex-M4F Architecture"
+    default y
+    help
+      Enable hardware floating-point unit (FPU) and Cortex-M4F specific context switching.
+
+config SYSTEM_CORE_CLOCK
+    int "System Core Clock (Hz)"
+    default 96000000
+    help
+      Apollo3 Blue runs at 96MHz.
+
+endmenu
+
+# ========================================================
+# 2. 内核、内存与电源调度机制
+# ========================================================
+menu "Kernel & Power Management"
+
+config MAX_TASKS
+    int "Maximum Concurrent Tasks"
+    default 8
+    help
+      Reduced from 16 to 8 to fit within 384KB SRAM limits.
+
+config POWER_MANAGER
+    bool "5-Level Power State Machine"
+    default y
+    help
+      Enable Active, Dim, Idle, Sleep, and Critical power states.
+
+config WRIST_WAKE_DETECTOR
+    bool "Wrist Wake Detection (Z-Axis)"
+    depends on POWER_MANAGER && SENSOR_BHI260AP
+    default y
+    help
+      Use accelerometer data to wake the screen when the user raises their wrist.
+
+config FRAME_SCHEDULER_V2
+    bool "Dynamic Frame Scheduler (0-30 FPS)"
+    default y
+    help
+      Replaces fixed 30fps scheduler. Pauses UI thread at 0fps during sleep.
+
+endmenu
+
+# ========================================================
+# 3. 硬件驱动层
+# ========================================================
+menu "Hardware Drivers"
+
+config DISPLAY_ST7789
+    bool "ST7789 AMOLED Display Driver"
+    default y
+    help
+      Driver for the 1.62-inch 192x490 SPI display.
+
+config GESTURE_RECOGNIZER
+    bool "7-State Gesture Engine"
+    default y
+    help
+      Translates raw GT316 touch events into Tap, Swipe, and Long Press gestures.
+
+config SENSOR_GH3026
+    bool "GH3026 PPG Heart Rate Sensor"
+    default y
+
+config SENSOR_BHI260AP
+    bool "BHI260AP 6-Axis Accelerometer (Pedometer)"
+    default y
+
+endmenu
+
+# ========================================================
+# 4. 网络层 (BLE 替换 lwIP)
+# ========================================================
+menu "Network & Connectivity"
+
+config BLE_STACK
+    bool "BLE 5.2 GATT Server Framework"
+    default y
+    help
+      Replaces Ethernet/lwIP. Includes Device Info, Time, Heart Rate, and Battery services.
+
+endmenu
+
+# ========================================================
+# 5. 应用层
+# ========================================================
+menu "Application Layer"
+
+config WATCH_APP
+    bool "Main Watch Face Application"
+    default y
+
+config FONT_ENGINE
+    bool "Bitmap Font Engine"
+    depends on WATCH_APP
+    default y
+    help
+      Renders text and numbers for the watch face.
+
+endmenu
