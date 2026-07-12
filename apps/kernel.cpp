@@ -18,6 +18,8 @@
 #include "../drivers/display/framebuffer.hpp"
 #include "../drivers/input/touch_driver.hpp" // 引入触控驱动
 #include "../drivers/input/input_event.hpp"  // 引入输入协议
+#include "../drivers/sensor/sensor_framework.hpp" // 传感器框架
+#include "../ui/complications.hpp"    // 小组件引擎
 #include "../drivers/storage/flash_device.hpp"
 #include "../vfs/photon_cache.hpp"
 #include "../vfs/littlefs_vnode.hpp"
@@ -237,6 +239,9 @@ FrameBuffer<128, 128> g_fb;
 // 2. 实例化全局 I2C 触控屏驱动，命名为 touch0
 TouchDriver g_touch("touch0", 128, 128);
 
+HealthSensor g_health_sensor("health");
+WatchFaceEngine g_watchface;
+
 // 可拖拽的 UI 控件组件 (比如一个 24x24 的手表智能应用卡片)
 struct DraggableWidget {
     uint16_t    x, y;
@@ -246,7 +251,7 @@ struct DraggableWidget {
 };
 
 // ==========================================
-// 手表主 UI 界面与拖拽交互引擎 (受 30FPS 窗口调度)
+// 手表主 UI 界面与拖拽交互引擎 + 表盘小组件引擎
 // ==========================================
 void ui_render_task(void) {
     g_oled.open();
@@ -255,28 +260,36 @@ void ui_render_task(void) {
     int touch_fd = open("/dev/touch0", 0);
     int console_fd = open("/dev/uart0", 0);
     
-    write(console_fd, "\r\n[BlueOS GUI] Input Event Subsystem & Drag Engine Mounted.\r\n", 61);
+    write(console_fd, "\r\n⌚ [auroraOS] WatchFace, Input Engine & Sensor Framework Online. Phase 2 Complete!\r\n", 83);
     close(console_fd);
 
-    // 初始化控件初始坐标于屏幕左上方 (30, 30)
-    DraggableWidget widget = { 30, 30, 20, 20, 0x07E0, false }; // 亮绿色卡片
+    // 初始化控件初始坐标于屏幕中央 (64, 64)
+    DraggableWidget widget = { 64, 64, 20, 20, 0x07E0, false }; // 亮绿色卡片
+
+    // 配置表盘上的两个数据挂载槽位 (对标 watchOS Complications)
+    g_watchface.add_complication(10, 10, 50, 20, 0xF800, 0x0000, hr_data_provider);
+    g_watchface.add_complication(65, 10, 50, 20, 0x07E0, 0x0000, step_data_provider);
 
     // 第一帧：绘制背景与初始控件
     g_fb.clear(0x0000);
     g_fb.fill_rect(widget.x - widget.width/2, widget.y - widget.height/2, widget.width, widget.height, widget.color);
+    g_watchface.render(g_fb);
     g_fb.flush(g_oled);
     
     FrameScheduler::instance().wait_for_next_frame();
 
     while (true) {
-        // 1. 从 /dev/touch0 读取最新标准输入事件包
+        // --- 1. 处理表盘数据渲染 (脏区域刷新) ---
+        g_watchface.render(g_fb);
+
+        // --- 2. 处理触摸交互与拖拽渲染 ---
         TouchPoint touch;
         int bytes = read(touch_fd, reinterpret_cast<char*>(&touch), sizeof(TouchPoint));
 
         if (bytes == sizeof(TouchPoint) && touch.is_valid) {
             console_fd = open("/dev/uart0", 0);
             
-            // 2. 判断输入交互并计算 UI 拖拽响应
+            // 判断输入交互并计算 UI 拖拽响应
             if (touch.state == TouchState::PRESSED || touch.state == TouchState::MOVING) {
                 if (!widget.is_dragging) {
                     write(console_fd, "\r\n👇 [Input Event] Touch PRESSED! Widget Dragging Started...\r\n", 62);
@@ -284,32 +297,30 @@ void ui_render_task(void) {
                     widget.color = 0xF800; // 拖拽时高亮变红！
                 }
 
-                // 【关键步骤：脏区域合围】
-                // a. 先在控件旧坐标填补纯黑背景（擦除旧残影，自动标记旧区域为脏）
+                // 擦除旧区域
                 g_fb.fill_rect(widget.x - widget.width/2, widget.y - widget.height/2, widget.width, widget.height, 0x0000);
 
-                // b. 更新控件坐标到手指触摸处
+                // 更新坐标
                 widget.x = touch.x;
                 widget.y = touch.y;
 
-                // c. 在新坐标绘制控件（自动标记新区域为脏）
+                // 新坐标绘制
                 g_fb.fill_rect(widget.x - widget.width/2, widget.y - widget.height/2, widget.width, widget.height, widget.color);
 
-                write(console_fd, "    🔄 [UI Drag] Widget moving to X...\r\n", 40);
             } else if (touch.state == TouchState::RELEASED && widget.is_dragging) {
                 write(console_fd, "\r\n👆 [Input Event] Touch RELEASED! Widget Dragging Dropped.\r\n", 61);
                 widget.is_dragging = false;
-                widget.color = 0x07E0; // 抬起手指，颜色恢复常态亮绿
+                widget.color = 0x07E0; // 抬起手指恢复
                 
                 g_fb.fill_rect(widget.x - widget.width/2, widget.y - widget.height/2, widget.width, widget.height, widget.color);
             }
             close(console_fd);
-
-            // 3. 将本帧动态求合集的微小脏包围盒通过 SPI 送给 OLED 屏！
-            g_fb.flush(g_oled);
         }
 
-        // 4. 遵守 33ms V-Sync 帧规律，释放 CPU 给后台算法
+        // 3. 动态求合集的脏区域送到屏幕
+        g_fb.flush(g_oled);
+
+        // 4. 遵守 30FPS V-Sync
         FrameScheduler::instance().wait_for_next_frame();
     }
 }
@@ -459,9 +470,9 @@ extern "C" void kernel_main(void) {
     DeviceRegistry::instance().register_device(new UartDevice("uart0"));
 #endif
     DeviceRegistry::instance().register_device(&g_oled);
-    // 【内核注册】将 I2C 触摸屏挂载到 /dev/touch0
     DeviceRegistry::instance().register_device(&g_touch);
     DeviceRegistry::instance().register_device(&g_nor_flash);
+    DeviceRegistry::instance().register_device(&g_health_sensor);
     
 #ifdef CONFIG_FS_PROCFS
     // 挂载 ProcFS 虚拟节点
