@@ -5,6 +5,7 @@
 #include "posix.hpp"
 #include "../drivers/sensor/sensor_framework.hpp"
 #include "../drivers/display/framebuffer.hpp"
+#include "../kernel/memory.hpp"
 
 // 引入第三方 Lua 虚拟机 C 接口
 extern "C" {
@@ -20,6 +21,35 @@ class MiniProgramEngine {
 private:
     lua_State* L_;
     bool       is_loaded_;
+
+    // ========================================================
+    // 自定义 Lua 内存分配器，将内存请求路由到 KernelHeap
+    // ========================================================
+    static void* lua_allocator(void* ud, void* ptr, size_t osize, size_t nsize) {
+        (void)ud;
+        if (nsize == 0) {
+            if (ptr != nullptr) {
+                KernelHeap::instance().deallocate(ptr);
+            }
+            return nullptr;
+        } else {
+            if (ptr == nullptr) {
+                return KernelHeap::instance().allocate(nsize);
+            } else {
+                void* new_ptr = KernelHeap::instance().allocate(nsize);
+                if (new_ptr) {
+                    size_t copy_size = (osize < nsize) ? osize : nsize;
+                    char* dest = static_cast<char*>(new_ptr);
+                    const char* src = static_cast<const char*>(ptr);
+                    for (size_t i = 0; i < copy_size; ++i) {
+                        dest[i] = src[i];
+                    }
+                    KernelHeap::instance().deallocate(ptr);
+                }
+                return new_ptr;
+            }
+        }
+    }
 
     // ========================================================
     // 系统 API 绑定 1：暴露获取心率的 C++ 函数给 Lua
@@ -75,7 +105,7 @@ public:
 
     // 初始化虚拟机并注册 API 命名空间
     bool init() {
-        L_ = luaL_newstate(); // 创建隔离的沙盒虚拟机
+        L_ = lua_newstate(lua_allocator, nullptr); // 创建隔离的沙盒虚拟机，使用 KernelHeap 分配内存
         if (!L_) return false;
         
         // 我们裁剪了标准的 linit.c，只手动加载最核心的 base 库
