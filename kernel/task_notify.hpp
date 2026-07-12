@@ -20,7 +20,7 @@ public:
 
         // 如果目标线程正处于等待通知的挂起状态，瞬间将它唤醒，拔高为 Ready！
         if (target->state == TaskState::Blocked_On_Notify) {
-            target->state = TaskState::Ready;
+            Scheduler::instance().set_task_state(target->id, TaskState::Ready);
             Arch::enable_interrupts();
             
             // 触发立即抢占调度
@@ -49,7 +49,7 @@ public:
             }
 
             // 没有收到通知，挂起当前任务自身，让出 CPU
-            current->state = TaskState::Blocked_On_Notify;
+            Scheduler::instance().set_task_state(current->id, TaskState::Blocked_On_Notify);
             Arch::enable_interrupts();
 
             Scheduler::instance().schedule();

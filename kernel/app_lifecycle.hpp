@@ -22,14 +22,14 @@ struct AppControlBlock {
 
         switch (new_state) {
             case AppState::FOREGROUND:
-                tcb->current_priority = TaskPriority::Realtime; // 提升至渲染特权级
-                tcb->state = TaskState::Ready;
+                Scheduler::instance().set_task_priority(tid, TaskPriority::Realtime); // 提升至渲染特权级
+                Scheduler::instance().set_task_state(tid, TaskState::Ready);
                 break;
             case AppState::BACKGROUND:
-                tcb->current_priority = TaskPriority::Low;  // 降级为后台处理级
+                Scheduler::instance().set_task_priority(tid, TaskPriority::Low);  // 降级为后台处理级
                 break;
             case AppState::SUSPENDED:
-                tcb->state = TaskState::Suspended; // 强行永久挂起调度
+                Scheduler::instance().set_task_state(tid, TaskState::Suspended); // 强行永久挂起调度
                 break;
             default: break;
         }

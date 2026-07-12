@@ -49,6 +49,9 @@ struct TaskControlBlock {
     uint32_t     stack_base;      // 栈基址（用于 MPU）
     uint8_t      size_pow2;       // 栈大小的 2 的幂次方（用于 MPU）
 
+    int8_t       next_ready;      // 动态优先级队列: 下一个就绪任务索引
+    int8_t       prev_ready;      // 动态优先级队列: 上一个就绪任务索引
+
     // ========================================================
     // 1. 【FreeRTOS 任务通知】零开销 TCB 内置字段
     // ========================================================
@@ -81,6 +84,82 @@ public:
         current_task_index = 0;
         task_count = 0;
         started_ = false;
+        ready_bitmask = 0;
+        for (int i = 0; i < 5; i++) ready_head[i] = -1;
+    }
+
+    void push_ready(uint32_t task_index) {
+        TaskControlBlock& tcb = tasks[task_index];
+        uint8_t prio = static_cast<uint8_t>(tcb.current_priority);
+        int8_t head = ready_head[prio];
+        
+        if (head == -1) {
+            ready_head[prio] = task_index;
+            tcb.next_ready = task_index;
+            tcb.prev_ready = task_index;
+            ready_bitmask |= (1 << prio);
+        } else {
+            TaskControlBlock& head_tcb = tasks[head];
+            int8_t tail = head_tcb.prev_ready;
+            TaskControlBlock& tail_tcb = tasks[tail];
+            
+            tail_tcb.next_ready = task_index;
+            tcb.prev_ready = tail;
+            tcb.next_ready = head;
+            head_tcb.prev_ready = task_index;
+        }
+    }
+
+    void remove_ready(uint32_t task_index) {
+        TaskControlBlock& tcb = tasks[task_index];
+        uint8_t prio = static_cast<uint8_t>(tcb.current_priority);
+        
+        if (tcb.next_ready == -1) return; // Not in queue
+        
+        if (tcb.next_ready == task_index) { 
+            // Only element
+            ready_head[prio] = -1;
+            ready_bitmask &= ~(1 << prio);
+        } else {
+            TaskControlBlock& prev_tcb = tasks[tcb.prev_ready];
+            TaskControlBlock& next_tcb = tasks[tcb.next_ready];
+            prev_tcb.next_ready = tcb.next_ready;
+            next_tcb.prev_ready = tcb.prev_ready;
+            if (ready_head[prio] == static_cast<int8_t>(task_index)) {
+                ready_head[prio] = tcb.next_ready;
+            }
+        }
+        tcb.next_ready = -1;
+        tcb.prev_ready = -1;
+    }
+
+    void set_task_state(uint32_t id, TaskState new_state) {
+        if (id >= task_count) return;
+        TaskControlBlock& tcb = tasks[id];
+        if (tcb.state == new_state) return;
+
+        if (tcb.state == TaskState::Ready) {
+            remove_ready(id);
+        }
+        tcb.state = new_state;
+        if (new_state == TaskState::Ready) {
+            push_ready(id);
+        }
+    }
+
+    void set_task_priority(uint32_t id, TaskPriority new_prio) {
+        if (id >= task_count) return;
+        TaskControlBlock& tcb = tasks[id];
+        if (tcb.current_priority == new_prio) return;
+
+        bool was_ready = (tcb.state == TaskState::Ready);
+        if (was_ready) {
+            remove_ready(id);
+        }
+        tcb.current_priority = new_prio;
+        if (was_ready) {
+            push_ready(id);
+        }
     }
 
     // 创建任务时指定优先级（默认 Normal），遵循 F.15: 提供具名参数
@@ -104,6 +183,9 @@ public:
         tcb.entry_point = task_entry;
         tcb.stack_base = static_cast<uint32_t>(reinterpret_cast<uintptr_t>(stack_space));
         tcb.size_pow2 = size_pow2;
+        
+        tcb.next_ready = -1;
+        tcb.prev_ready = -1;
 
         // 初始化任务通知与信号管理
         tcb.notify_value = 0;
@@ -113,6 +195,7 @@ public:
 
         // 调用 HAL 接口完成 Cortex-M4 栈帧伪造，与具体架构解耦
         tcb.stack_ptr = Arch::init_thread_stack(task_entry, stack_space, stack_size);
+        push_ready(task_count);
         task_count++;
         return &tcb;
     }
@@ -128,7 +211,7 @@ public:
                 tcb->pending_signals &= ~(1 << i); // 清除标志位
                 
                 if (i == SIGKILL) {
-                    tcb->state = TaskState::Terminated;
+                    set_task_state(tcb->id, TaskState::Terminated);
                     continue; // 终止后不再执行其它处理函数
                 }
 
@@ -140,72 +223,57 @@ public:
     }
 
     // =========================================================================
-    // 基于优先级的抢占式调度算法 — O(N) 两阶段查找
+    // 基于优先级的抢占式调度算法 — O(1) 动态优先级队列
     //
-    // 阶段一: 扫描全部就绪任务，找出当前最高优先级 max_prio
-    // 阶段二: 在同属 max_prio 的候选任务中做循环时间片轮转
-    // 阶段三: 若选出的任务与当前不同，通过 HAL 触发 PendSV 硬件上下文切换
+    // 阶段一: 从 ready_bitmask 快速定位最高优先级
+    // 阶段二: 时间片轮转
+    // 阶段三: 发起上下文切换
     // =========================================================================
     void schedule() {
         if (!started_ || task_count <= 1) return;
 
         // 【安全信号拦截点】
-        // 此时系统处于当前任务自身的上下文（或 SysTick 抢占时的中断栈）。
-        // 优先处理自身的 POSIX 异步信号，绝对隔离，杜绝栈破损。
         dispatch_signals(&tasks[current_task_index]);
 
-        // ── 阶段一：寻找最高可运行优先级 ──────────────────────────────────
-        TaskPriority max_prio = TaskPriority::Idle;
-        for (uint32_t i = 0; i < task_count; i++) {
-            if (tasks[i].state != TaskState::Sleeping && tasks[i].state != TaskState::Blocked_On_Notify && tasks[i].state != TaskState::Terminated && tasks[i].state != TaskState::Suspended) {
-                // 【蓝河帧感知拦截】如果属于帧间非关键任务，但在本帧的 UI 渲染还没结束时，强行跳过！
-                if (!frame_scheduler_is_task_allowed(static_cast<uint8_t>(tasks[i].current_priority))) {
-                    continue;
-                }
-
-                if (tasks[i].current_priority > max_prio) {
-                    max_prio = tasks[i].current_priority;
-                }
+        // ── 时间片轮转：如果当前任务仍然就绪且处于队首，将其移至队尾
+        if (tasks[current_task_index].state == TaskState::Ready) {
+            uint8_t p = static_cast<uint8_t>(tasks[current_task_index].current_priority);
+            if (ready_head[p] == static_cast<int8_t>(current_task_index)) {
+                ready_head[p] = tasks[current_task_index].next_ready;
             }
         }
 
-        // ── 阶段二：同级优先级循环时间片轮转 ────────────────────────────
+        // ── O(1) 寻找最高可运行优先级 ──
         uint32_t next_task = current_task_index;
         bool task_found = false;
-        for (uint32_t i = 0; i < task_count; i++) {
-            next_task = (next_task + 1) % task_count;
-            if (tasks[next_task].state != TaskState::Sleeping && tasks[next_task].state != TaskState::Blocked_On_Notify && tasks[next_task].state != TaskState::Terminated && tasks[next_task].state != TaskState::Suspended &&
-                tasks[next_task].current_priority == max_prio) {
-                // 【蓝河帧感知拦截】同级查找也需校验
-                if (frame_scheduler_is_task_allowed(static_cast<uint8_t>(tasks[next_task].current_priority))) {
+
+        for (int p = 4; p >= 0; p--) {
+            if (ready_bitmask & (1 << p)) {
+                // 【蓝河帧感知拦截】
+                if (frame_scheduler_is_task_allowed(p)) {
+                    next_task = ready_head[p];
                     task_found = true;
                     break;
                 }
             }
         }
 
-        // ── 阶段二点五：兜底安全网，如果所有任务都被帧拦截或休眠 ────────
-        // 如果连符合条件的任务都没找到，强制查找是否有 Idle 任务可运行（打破帧调度器的封锁）
-        // 否则如果在没有任务可运行的情况下不切换任务，当前可能已经Terminated的任务会继续执行，造成极度危险的OOB执行和崩溃
+        // ── 兜底安全网 ──
         if (!task_found) {
-            for (uint32_t i = 0; i < task_count; i++) {
-                if (tasks[i].base_priority == TaskPriority::Idle && tasks[i].state == TaskState::Ready) {
-                    next_task = i;
-                    break;
-                }
+            if (ready_bitmask & (1 << 0)) { // Idle task 必然是 Priority 0
+                next_task = ready_head[0];
             }
         }
 
-        // ── 阶段三：发起上下文切换 ──────────────────────────────────────
+        // ── 上下文切换 ──
         if (next_task != current_task_index) {
-
-            Arch::disable_interrupts(); // 临界区：更新 TCB 指针必须原子完成
+            Arch::disable_interrupts();
             g_current_tcb_ptr = &tasks[current_task_index];
             current_task_index = next_task;
             g_next_tcb_ptr = &tasks[current_task_index];
             
-            Arch::enable_interrupts();  // 必须先恢复中断，PendSV 才能被硬件响应
-            Arch::trigger_context_switch(); // Pending PendSV 位，等待中断开放后执行
+            Arch::enable_interrupts();
+            Arch::trigger_context_switch();
         }
     }
 
@@ -215,7 +283,7 @@ public:
         // SysTick 只会检查 sleeping 状态，不会修改当前任务的字段
         TaskControlBlock* current = get_current_tcb();
         current->sleep_ticks = ticks;
-        current->state = TaskState::Sleeping;
+        set_task_state(current->id, TaskState::Sleeping);
         schedule(); // 状态更新后立即让出 CPU
     }
 
@@ -227,7 +295,7 @@ public:
                     tasks[i].sleep_ticks--;
                 }
                 if (tasks[i].sleep_ticks == 0) {
-                    tasks[i].state = TaskState::Ready;
+                    set_task_state(i, TaskState::Ready);
                 }
             }
         }
@@ -260,7 +328,7 @@ public:
                     tasks[i].sleep_ticks -= skipped_ticks;
                 } else {
                     tasks[i].sleep_ticks = 0;
-                    tasks[i].state = TaskState::Ready;
+                    set_task_state(i, TaskState::Ready);
                 }
             }
         }
@@ -304,7 +372,9 @@ public:
     }
 
 private:
-    Scheduler() = default;
+    Scheduler() {
+        for (int i = 0; i < 5; i++) ready_head[i] = -1;
+    }
 #ifdef CONFIG_MAX_TASKS
     static constexpr int MAX_TASKS = CONFIG_MAX_TASKS;
 #else
@@ -314,6 +384,9 @@ private:
     uint32_t current_task_index = 0;
     uint32_t task_count = 0;
     bool started_ = false;
+    
+    int8_t ready_head[5]; // Head of ready list for each priority level (0-4)
+    uint8_t ready_bitmask = 0; // Bitmask of priorities that have ready tasks
 };
 
 #endif // TASK_HPP

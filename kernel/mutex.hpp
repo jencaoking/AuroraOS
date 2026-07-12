@@ -23,7 +23,7 @@ public:
             
             // 优先级继承
             if (owner_ && (int)current->current_priority > (int)owner_->current_priority) {
-                owner_->current_priority = current->current_priority;
+                Scheduler::instance().set_task_priority(owner_->id, current->current_priority);
             }
             Arch::enable_interrupts();
             
@@ -35,7 +35,7 @@ public:
     void unlock() {
         Arch::disable_interrupts();
         if (owner_) {
-            owner_->current_priority = owner_->base_priority;
+            Scheduler::instance().set_task_priority(owner_->id, owner_->base_priority);
             owner_ = nullptr;
         }
         locked_ = false;
