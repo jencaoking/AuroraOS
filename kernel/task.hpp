@@ -148,6 +148,11 @@ public:
     void schedule() {
         if (!started_ || task_count <= 1) return;
 
+        // 【安全信号拦截点】
+        // 此时系统处于当前任务自身的上下文（或 SysTick 抢占时的中断栈）。
+        // 优先处理自身的 POSIX 异步信号，绝对隔离，杜绝栈破损。
+        dispatch_signals(&tasks[current_task_index]);
+
         // ── 阶段一：寻找最高可运行优先级 ──────────────────────────────────
         TaskPriority max_prio = TaskPriority::Idle;
         for (uint32_t i = 0; i < task_count; i++) {
@@ -178,9 +183,6 @@ public:
 
         // ── 阶段三：发起上下文切换 ──────────────────────────────────────
         if (next_task != current_task_index) {
-            // 【信号拦截点】切入新任务前，优先处理它的 POSIX 异步信号
-            // 注意：必须在关中断之前执行，防止信号处理函数过长导致中断延迟过高
-            dispatch_signals(&tasks[next_task]);
 
             Arch::disable_interrupts(); // 临界区：更新 TCB 指针必须原子完成
             g_current_tcb_ptr = &tasks[current_task_index];

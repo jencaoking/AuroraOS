@@ -27,8 +27,9 @@ inline int kill(uint32_t target_task_id, int sig) {
     // 在位图中打上对应信号的标记
     target->pending_signals |= (1 << sig);
 
-    // 如果任务在睡眠，且收到了致命信号，唤醒它参与调度，使其在上下文切换时触发拦截
-    if (target->state == TaskState::Sleeping && sig == SIGKILL) {
+    if (sig == SIGKILL) {
+        target->state = TaskState::Terminated;
+    } else if (target->state == TaskState::Sleeping) {
         target->state = TaskState::Ready;
     }
 
