@@ -568,7 +568,7 @@ python scripts/genconfig.py
 
 ## 开发路线图
 
-### Phase 1: 内核加固（3-6 个月）— ✅ 98% 完成
+### Phase 1: 内核加固（3-6 个月）— ✅ 100% 完成
 
 - [x] 优先级抢占调度器 + 上下文切换
 - [x] 架构抽象层（arch_api → arch_impl）
@@ -595,7 +595,7 @@ python scripts/genconfig.py
 - [x] irq_save/restore 扩展
 - [x] 消息队列优先级 (紧急插队 push_urgent)
 
-### Phase 2: 手表原型（6-12 个月）— 🚧 63% 完成
+### Phase 2: 手表原型（6-12 个月）— 🚧 75% 完成
 
 - [x] 帧缓冲 + 脏区域渲染（FrameBuffer）
 - [x] OLED 驱动框架（OledDriver）
@@ -608,7 +608,7 @@ python scripts/genconfig.py
 - [x] ST7789 真实驱动（miband 分支）
 - [x] BLE 协议栈架构（miband 分支）
 - [x] BleStack 底层并发与挂死防范加固
-- [ ] 2D 绘图引擎
+- [x] 2D 绘图引擎（Renderer2D：直线/圆/弧/三角形/圆角矩形/文本/混色）
 - [ ] Tickless 真实硬件唤醒定时器
 - [ ] 充电管理驱动
 
