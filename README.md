@@ -98,6 +98,7 @@ auroraOS 坚信"好的架构来自借鉴与融合"。系统不是从零发明一
 - **lwIP 2.x 全栈**：IPv4/TCP/UDP/ICMP/ARP/DHCP，Socket + Netconn 双 API
 - **OSAL 适配层**：sys_arch.cpp 完整实现 Mutex/Semaphore/Mailbox/Thread 映射
 - **DHCP 客户端**：动态获取 IP 地址
+- **BLE 蓝牙协议栈 (BleManager)**：通过硬件 IPC 模拟连接 Apollo3 蓝牙协处理器，预置设备信息、心率、电量等服务。其底层 HCI 层经过严格的防挂死超时与互斥锁加固，彻底规避因外设无响应导致内核级死锁。
 - **分布式软总线**：借鉴 HarmonyOS，UDP 广播设备发现 + JSON 信标 + 设备路由表
 
 ### 🎨 显示与输入
@@ -590,6 +591,8 @@ python scripts/genconfig.py
 - [x] 以太网驱动防死锁排空机制
 - [x] 分布式软总线/JSON解析越界防护
 - [x] Shell 命令补全（ping/netstat/reboot/date）
+- [x] 内核调度器死亡任务兜底切换与死锁修复
+- [x] 内核内存堆双重释放拦截（魔数）与 realloc 越界读取修复
 - [ ] irq_save/restore 扩展
 - [ ] 消息队列优先级
 
@@ -605,8 +608,8 @@ python scripts/genconfig.py
 - [x] LittleFS + PhotonCache 光子缓存
 - [x] ST7789 真实驱动（miband 分支）
 - [x] BLE 协议栈架构（miband 分支）
+- [x] BleStack 底层并发与挂死防范加固
 - [ ] 2D 绘图引擎
-- [ ] BLE 协议栈完整移植（Zephyr BLE）
 - [ ] Tickless 真实硬件唤醒定时器
 - [ ] 充电管理驱动
 

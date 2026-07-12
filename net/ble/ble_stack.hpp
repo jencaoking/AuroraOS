@@ -3,6 +3,7 @@
 
 #include <stdint.h>
 #include <stddef.h>
+#include "../../kernel/mutex.hpp"
 
 // ========================================================
 // BLE 基础数据结构与权限定义
@@ -109,6 +110,7 @@ private:
     uint8_t  battery_level_;
     uint8_t  hr_measurement_[2]; // [0]: Flags, [1]: BPM
     uint8_t  vendor_rx_buf_[20]; // 接收手机 App 发送的控制指令
+    Mutex    hci_mutex_;         // 保护底层硬件 IPC/UART 通信
 
     BleManager() : current_state_(BleConnectionState::DISCONNECTED), battery_level_(100) {
         hr_measurement_[0] = 0x00; // 8-bit Heart Rate format
@@ -152,16 +154,25 @@ public:
     #define BLE_IPC_STATUS         (APOLLO3_BLE_IPC_BASE + 0x08)
 
     void hci_send_cmd(uint16_t opcode, const uint8_t* param, uint8_t len) {
+        LockGuard lock(hci_mutex_); // 防止多线程并发写穿或交错
+        
         volatile uint32_t* cmd_fifo  = reinterpret_cast<uint32_t*>(BLE_IPC_CMD_FIFO);
         volatile uint32_t* data_fifo = reinterpret_cast<uint32_t*>(BLE_IPC_DATA_FIFO);
         volatile uint32_t* status    = reinterpret_cast<uint32_t*>(BLE_IPC_STATUS);
         
         *cmd_fifo = opcode;
-        for (int i = 0; i < len; ++i) {
-            *data_fifo = param[i];
+        if (param != nullptr && len > 0) {
+            for (int i = 0; i < len; ++i) {
+                *data_fifo = param[i];
+            }
         }
         *cmd_fifo = 0xFFFF; // Commit command
-        while ((*status & 0x01) != 0); // Wait for IPC idle
+        
+        // 带超时的安全轮询，防止底层蓝牙协处理器挂死导致主核死锁
+        uint32_t timeout = 100000;
+        while ((*status & 0x01) != 0 && timeout > 0) {
+            timeout--;
+        }
     }
 
     // ========================================================
