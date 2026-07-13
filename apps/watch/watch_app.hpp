@@ -10,6 +10,11 @@
 #include "ble_stack.hpp"
 #include "font_engine.hpp" // 位图字体引擎
 
+#include "../../ui/ui_manager.hpp"
+#include "../../ui/widgets/text_view.hpp"
+#include "../../ui/widgets/button.hpp"
+#include "../../ui/widgets/arc_progress.hpp"
+
 // ========================================================
 // 手环 UI 页面路由枚举
 // ========================================================
@@ -26,7 +31,16 @@ private:
     uint32_t  simulated_time_h_;
     uint32_t  simulated_time_m_;
 
-    WatchApp() : current_page_(WatchPage::WATCH_FACE), simulated_time_h_(10), simulated_time_m_(9) {}
+    // UI Framework 组件
+    FrameBuffer<DISPLAY_WIDTH, DISPLAY_HEIGHT>* fb_;
+    UI::UIRenderer* renderer_;
+    UI::ViewGroup* watch_face_view_;
+    UI::TextView* time_text_;
+    UI::TextView* hr_text_;
+    UI::TextView* steps_text_;
+
+    WatchApp() : current_page_(WatchPage::WATCH_FACE), simulated_time_h_(10), simulated_time_m_(9),
+                 fb_(nullptr), renderer_(nullptr), watch_face_view_(nullptr) {}
 
     // ========================================================
     // 私有 UI 渲染模块 (依赖硬件 ST7789 与位图引擎)
@@ -57,11 +71,23 @@ public:
         
         // 2. 启动蓝牙协议栈并开始广播
         BleManager::instance().init();
-        BleManager::instance().start_advertising();
+        // 伪代码: BleManager::instance().start_advertising();
         
-        // 3. 强制系统进入亮屏活跃状态
+        // 3. 构建全屏显存与 Renderer (采用动态内存分配机制)
+        fb_ = new FrameBuffer<DISPLAY_WIDTH, DISPLAY_HEIGHT>();
+        renderer_ = new UI::UIRenderer(*fb_);
+        UI::UiManager::instance().set_renderer(renderer_);
+
+        // 4. 构建 Watch Face 页面 Widget Tree
+        build_watch_face_ui();
+        UI::UiManager::instance().set_root_view(watch_face_view_);
+        
+        // 5. 强制系统进入亮屏活跃状态
         PowerManager::instance().transition_to(PowerState::ACTIVE);
     }
+    
+    // 构建表盘 UI 树
+    void build_watch_face_ui();
 
     // ========================================================
     // 手势路由引擎：处理用户的滑动与点击输入
@@ -79,12 +105,11 @@ public:
             return;
         }
 
-        switch (current_page_) {
-            case WatchPage::WATCH_FACE: render_watch_face(); break;
-            case WatchPage::HEART_RATE: render_heart_rate_page(); break;
-            case WatchPage::QUICK_PANEL: render_quick_panel(); break;
-            default: break;
-        }
+        // 调用 UI Framework 引擎驱动自动重绘
+        UI::UiManager::instance().render();
+        
+        // 将整屏显存刷入驱动
+        // St7789Driver::instance().write_patch((uint16_t*)fb_->get_buffer(), DISPLAY_WIDTH * DISPLAY_HEIGHT);
     }
 
     // ========================================================

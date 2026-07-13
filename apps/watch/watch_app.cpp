@@ -9,8 +9,6 @@
 // ========================================================
 // 静态全局变量与微型显存池
 // ========================================================
-// 针对 192x490 屏幕，我们不分配全屏显存 (会吃掉 188KB SRAM)
-// 而是分配一块 192x64 的局部渲染缓冲 (仅需 ~24KB)，结合 DMA 分块推送
 static constexpr uint16_t CHUNK_HEIGHT = 64;
 static uint16_t render_buffer[192 * CHUNK_HEIGHT];
 
@@ -22,65 +20,27 @@ static constexpr uint16_t COLOR_TEXT_MUTED  = 0x8410; // 碳灰
 // ========================================================
 // 1. GUI 渲染管线接管 (Watch Face)
 // ========================================================
-void WatchApp::render_watch_face() {
-    // 获取底层感知数据
-    SensorData hr_data;
-    uint32_t current_bpm = 0;
-    if (SensorManager::instance().pop_data(&hr_data) && hr_data.type == SensorType::HEART_RATE) {
-        current_bpm = hr_data.payload.bpm;
-    }
-    uint32_t current_steps = SensorManager::instance().get_accel_sensor().get_steps();
-    BleConnectionState ble_state = BleManager::instance().get_state();
+void WatchApp::build_watch_face_ui() {
+    watch_face_view_ = new UI::ViewGroup(0, 0, DISPLAY_WIDTH, DISPLAY_HEIGHT);
 
-    // 采用分块渲染 (Chunked Rendering) 推送至 ST7789
-    // Chunk 0: 顶部状态栏 (电量与蓝牙状态)
-    St7789Driver::instance().set_window(0, 0, 191, CHUNK_HEIGHT - 1);
-    for(int i=0; i<192*CHUNK_HEIGHT; ++i) render_buffer[i] = COLOR_BG_DARK; // 清空背景
+    // 顶部状态栏: 蓝牙和电量
+    UI::TextView* ble_text = new UI::TextView(150, 10, "BLE", 0x07E0, 0, 1);
+    watch_face_view_->add_child(ble_text);
     
-    if (ble_state == BleConnectionState::CONNECTED) {
-        FontEngine::draw_string(150, 10, "BLE", FontColor::BLUE, FontSize::SMALL, render_buffer, 192);
-    }
-    FontEngine::draw_number(10, 10, 85, FontColor::WHITE, FontSize::SMALL, render_buffer, 192); // 模拟 85% 电量
-    St7789Driver::instance().write_patch(render_buffer, 192 * CHUNK_HEIGHT);
+    // 时间显示 (居中)
+    time_text_ = new UI::TextView(20, 100, "10:09", 0xFFFF, 0, 4);
+    watch_face_view_->add_child(time_text_);
 
-    // Chunk 1 & 2: 中心巨大的时间显示, 跨越两块 Chunk 高度 (128px)
-    St7789Driver::instance().set_window(0, CHUNK_HEIGHT, 191, CHUNK_HEIGHT*3 - 1);
+    // 运动健康数据 (底部)
+    hr_text_ = new UI::TextView(80, 250, "HR: 0", 0xF800, 0, 2);
+    watch_face_view_->add_child(hr_text_);
+
+    steps_text_ = new UI::TextView(80, 300, "STP: 0", 0x07E0, 0, 2);
+    watch_face_view_->add_child(steps_text_);
     
-    // 渲染时间字符串 (如 10:09)
-    char time_str[6];
-    time_str[0] = (simulated_time_h_ / 10) + '0';
-    time_str[1] = (simulated_time_h_ % 10) + '0';
-    time_str[2] = ':';
-    time_str[3] = (simulated_time_m_ / 10) + '0';
-    time_str[4] = (simulated_time_m_ % 10) + '0';
-    time_str[5] = '\0';
-    
-    for(int pass = 0; pass < 2; ++pass) {
-        for(int i=0; i<192*CHUNK_HEIGHT; ++i) render_buffer[i] = COLOR_BG_DARK; 
-        
-        int16_t y_offset = -(pass * CHUNK_HEIGHT);
-        FontEngine::draw_string(20, static_cast<int16_t>(20 + y_offset), time_str, FontColor::WHITE, FontSize::HUGE, render_buffer, 192);
-        
-        St7789Driver::instance().write_patch(render_buffer, 192 * CHUNK_HEIGHT);
-    }
-
-    // Chunk 3: 底部运动健康数据区 (心率 & 步数), 剩余高度 298px
-    St7789Driver::instance().set_window(0, CHUNK_HEIGHT*3, 191, 489);
-    for(int pass = 0; pass < 5; ++pass) {
-        uint16_t current_chunk_height = (pass == 4) ? (298 % CHUNK_HEIGHT) : CHUNK_HEIGHT;
-        if (current_chunk_height == 0) continue;
-        
-        for(int i=0; i<192*current_chunk_height; ++i) render_buffer[i] = COLOR_BG_DARK;
-        
-        int16_t y_offset = -(pass * CHUNK_HEIGHT);
-        FontEngine::draw_string(20, static_cast<int16_t>(20 + y_offset), "HR:", static_cast<FontColor>(COLOR_TEXT_MUTED), FontSize::MEDIUM, render_buffer, 192);
-        FontEngine::draw_number(80, static_cast<int16_t>(20 + y_offset), current_bpm, FontColor::RED, FontSize::MEDIUM, render_buffer, 192);
-
-        FontEngine::draw_string(20, static_cast<int16_t>(70 + y_offset), "STP:", static_cast<FontColor>(COLOR_TEXT_MUTED), FontSize::MEDIUM, render_buffer, 192);
-        FontEngine::draw_number(80, static_cast<int16_t>(70 + y_offset), current_steps, static_cast<FontColor>(COLOR_TEXT_ACCENT), FontSize::MEDIUM, render_buffer, 192);
-
-        St7789Driver::instance().write_patch(render_buffer, 192 * current_chunk_height);
-    }
+    // 进度条圆弧
+    UI::ArcProgress* battery_arc = new UI::ArcProgress(96, 400, 40, 85, 0x07E0);
+    watch_face_view_->add_child(battery_arc);
 }
 
 // ========================================================
@@ -92,24 +52,29 @@ void WatchApp::handle_gesture(GestureType gesture) {
     // 交互防抖：触发任何手势，系统立即重置熄屏倒计时，保持 Active 状态
     PowerManager::instance().transition_to(PowerState::ACTIVE);
 
-    // 状态机页面路由
+    // 将枚举事件封装为不带坐标的简单手势事件并路由给 UI 框架
+    UI::GestureEvent event = {gesture, 0, 0};
+    UI::UiManager::instance().dispatch_gesture(event);
+
+    // 全局页面手势拦截
     switch (current_page_) {
         case WatchPage::WATCH_FACE:
             if (gesture == GestureType::SWIPE_DOWN) {
                 current_page_ = WatchPage::QUICK_PANEL; // 下拉呼出控制中心
             } else if (gesture == GestureType::SWIPE_LEFT) {
-                current_page_ = WatchPage::HEART_RATE;  // 侧滑进入心率趋势图
+                current_page_ = WatchPage::HEART_RATE; // 左滑进入心率检测页面
             }
             break;
-
         case WatchPage::HEART_RATE:
-        case WatchPage::QUICK_PANEL:
-            // 边缘右滑或上滑统一返回主表盘
-            if (gesture == GestureType::SWIPE_RIGHT || gesture == GestureType::SWIPE_UP) {
-                current_page_ = WatchPage::WATCH_FACE;
+            if (gesture == GestureType::SWIPE_RIGHT) {
+                current_page_ = WatchPage::WATCH_FACE; // 右滑返回
             }
             break;
-            
+        case WatchPage::QUICK_PANEL:
+            if (gesture == GestureType::SWIPE_UP) {
+                current_page_ = WatchPage::WATCH_FACE; // 上滑返回表盘
+            }
+            break;
         default:
             break;
     }
@@ -122,20 +87,65 @@ void WatchApp::on_background_tick(uint32_t delta_ticks) {
     // 驱动电源生命周期引擎
     PowerManager::instance().on_tick(delta_ticks);
 
-    // 累加时间，驱动表盘 UI 更新
+    // 模拟时间流逝
     static uint32_t ms_accumulator = 0;
     ms_accumulator += delta_ticks;
-    if (ms_accumulator >= 60000) { 
+    if (ms_accumulator >= 60000) { // 每 60 秒 (1分钟)
         ms_accumulator = 0;
         simulated_time_m_++;
         if (simulated_time_m_ >= 60) {
             simulated_time_m_ = 0;
             simulated_time_h_ = (simulated_time_h_ + 1) % 24;
         }
+        
+        // 更新 UI 时间 (格式 10:09)
+        static char time_str[6];
+        time_str[0] = (simulated_time_h_ / 10) + '0';
+        time_str[1] = (simulated_time_h_ % 10) + '0';
+        time_str[2] = ':';
+        time_str[3] = (simulated_time_m_ / 10) + '0';
+        time_str[4] = (simulated_time_m_ % 10) + '0';
+        time_str[5] = '\0';
+        if (time_text_) {
+            time_text_->set_text(time_str);
+        }
+    }
+
+    uint32_t current_bpm = 0;
+    uint32_t current_steps = SensorManager::instance().get_accel_sensor().get_steps();
+    SensorData data;
+    if (SensorManager::instance().pop_data(&data) && data.type == SensorType::HEART_RATE) {
+        current_bpm = data.payload.bpm;
+    }
+
+    // 更新 UI 组件数据
+    static char hr_buf[16];
+    static char stp_buf[16];
+    static uint32_t last_bpm = 0xFFFFFFFF;
+    static uint32_t last_steps = 0xFFFFFFFF;
+
+    if (current_bpm != last_bpm && hr_text_) {
+        hr_buf[0] = 'H'; hr_buf[1] = 'R'; hr_buf[2] = ':'; hr_buf[3] = ' ';
+        hr_buf[4] = (current_bpm / 100) + '0';
+        hr_buf[5] = ((current_bpm / 10) % 10) + '0';
+        hr_buf[6] = (current_bpm % 10) + '0';
+        hr_buf[7] = '\0';
+        hr_text_->set_text(hr_buf);
+        last_bpm = current_bpm;
+    }
+
+    if (current_steps != last_steps && steps_text_) {
+        stp_buf[0] = 'S'; stp_buf[1] = 'T'; stp_buf[2] = 'P'; stp_buf[3] = ':'; stp_buf[4] = ' ';
+        stp_buf[5] = (current_steps / 1000) + '0';
+        stp_buf[6] = ((current_steps / 100) % 10) + '0';
+        stp_buf[7] = ((current_steps / 10) % 10) + '0';
+        stp_buf[8] = (current_steps % 10) + '0';
+        stp_buf[9] = '\0';
+        steps_text_->set_text(stp_buf);
+        last_steps = current_steps;
     }
 
     // 蓝牙 GATT Server 数据同步
-    // 获取底层步数算法和心率滤波后的最终可信值，打包推向手机端
     if (BleManager::instance().get_state() == BleConnectionState::CONNECTED) {
         static uint32_t sync_throttle = 0;
         sync_throttle += delta_ticks;
@@ -143,15 +153,10 @@ void WatchApp::on_background_tick(uint32_t delta_ticks) {
         // 限制蓝牙同步频率为 1Hz，防止射频芯片过热并节省电量
         if (sync_throttle >= 1000) {
             sync_throttle = 0;
-            
-            // 同步心率 (0x180D Service)
-            SensorData data;
-            if (SensorManager::instance().pop_data(&data) && data.type == SensorType::HEART_RATE) {
-                BleManager::instance().update_heart_rate(static_cast<uint8_t>(data.payload.bpm));
+            if (current_bpm > 0) {
+                BleManager::instance().update_heart_rate(static_cast<uint8_t>(current_bpm));
             }
-            
-            // 同步电池电量 (0x180F Service)
-            BleManager::instance().update_battery_level(85); // 假设当前电量为 85%
+            BleManager::instance().update_battery_level(85);
         }
     }
 }
