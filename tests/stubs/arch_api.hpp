@@ -18,13 +18,23 @@
 namespace Arch {
 
 inline void disable_interrupts() noexcept {}
-inline void enable_interrupts()  noexcept {}
+extern void (*g_arch_test_interrupt_hook)();
+inline void enable_interrupts()  noexcept {
+    if (g_arch_test_interrupt_hook) g_arch_test_interrupt_hook();
+}
 inline uint32_t irq_save()       noexcept { return 0; }
 inline void irq_restore(uint32_t /*flags*/) noexcept {}
 inline void wait_for_interrupt() noexcept {}
 
 inline void systick_init(uint32_t /*hz*/) noexcept {}
-inline void trigger_context_switch() noexcept {}
+
+extern "C" __attribute__((weak)) void arch_test_context_switch_hook();
+
+inline void trigger_context_switch() noexcept {
+    if (arch_test_context_switch_hook) {
+        arch_test_context_switch_hook();
+    }
+}
 
 inline uint32_t get_cycle() noexcept {
     static uint32_t simulated_cycles = 0;

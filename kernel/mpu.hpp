@@ -2,6 +2,63 @@
 #define AURORA_MPU_HPP
 
 #include <stdint.h>
+#include "../utils/hmac_sha256.hpp"  // Crc32 namespace
+
+// ─────────────────────────────────────────────────────────────────────────────
+// KERNEL_ASSERT: Controlled halt on fatal invariant violation.
+// In production this triggers IWDG starvation (watchdog-forced reset).
+// In host tests the extern "C" weak stub just records the failure.
+// ─────────────────────────────────────────────────────────────────────────────
+#ifdef AURORA_HOST_TEST
+#include <cstdio>
+#define KERNEL_ASSERT(cond, msg) \
+    do { if (!(cond)) { \
+        ::fprintf(stderr, "[KERNEL_ASSERT] %s  (file %s line %d)\n", \
+                  (msg), __FILE__, __LINE__); \
+    }} while(0)
+#else
+extern "C" void uart_puts(const char* s);
+#define KERNEL_ASSERT(cond, msg) \
+    do { if (!(cond)) { \
+        uart_puts("[KERNEL_ASSERT] " msg "\n"); \
+        /* Stall — IWDG will force a reset */ \
+        while(1) {} \
+    }} while(0)
+#endif
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SandboxDescriptor — descriptor for a per-task MPU sandbox region.
+// The crc32 field covers all other fields to detect in-memory tampering.
+// ─────────────────────────────────────────────────────────────────────────────
+struct SandboxDescriptor {
+    uintptr_t stack_base;    // Must be aligned to (1 << size_pow2)
+    uint8_t   size_pow2;     // Region size = 2^size_pow2 bytes  [5..17]
+    uint32_t  version;       // Monotonically increasing per-task version
+    uint32_t  crc32;         // CRC32(stack_base | size_pow2 | version)
+
+    // Compute and store the CRC32 over the other three fields.
+    // Call this whenever stack_base / size_pow2 / version are updated.
+    void seal() noexcept {
+        const uint32_t words[3] = {
+            static_cast<uint32_t>(stack_base),
+            static_cast<uint32_t>(size_pow2),
+            version
+        };
+        crc32 = Crc32::compute(
+            reinterpret_cast<const uint8_t*>(words), sizeof(words));
+    }
+
+    [[nodiscard]] bool is_valid() const noexcept {
+        const uint32_t words[3] = {
+            static_cast<uint32_t>(stack_base),
+            static_cast<uint32_t>(size_pow2),
+            version
+        };
+        const uint32_t expected = Crc32::compute(
+            reinterpret_cast<const uint8_t*>(words), sizeof(words));
+        return crc32 == expected;
+    }
+};
 
 class MPU {
 private:
@@ -81,8 +138,39 @@ public:
         *reg_rasr = rasr_val;
     }
 
+    // ─────────────────────────────────────────────────────────────────────
+    // update_user_sandbox_verified — Multi-layer validated sandbox update.
+    //
+    // Checks (in order):
+    //   1. CRC32 integrity of the descriptor (catches in-memory tampering)
+    //   2. size_pow2 range [5, 17]  (32 B … 128 KB)
+    //   3. Base address alignment to region size
+    //
+    // On any failure the MPU region is left unchanged and KERNEL_ASSERT fires.
+    // Called from mpu_switch_sandbox() in interrupts.cpp (PendSV context).
+    // ─────────────────────────────────────────────────────────────────────
+    void update_user_sandbox_verified(const SandboxDescriptor& desc) noexcept {
+        // 1. CRC32 integrity
+        KERNEL_ASSERT(desc.is_valid(), "MPU: SandboxDescriptor CRC32 mismatch");
+
+        // 2. size_pow2 range (32 B = 2^5 … 128 KB = 2^17)
+        KERNEL_ASSERT(desc.size_pow2 >= 5u && desc.size_pow2 <= 17u,
+                      "MPU: size_pow2 out of range [5..17]");
+
+        // 3. Alignment: base_addr must be a multiple of region size
+        const uintptr_t align_mask =
+            (static_cast<uintptr_t>(1) << desc.size_pow2) - 1u;
+        KERNEL_ASSERT((desc.stack_base & align_mask) == 0u,
+                      "MPU: stack_base misaligned to region size");
+
+        // All checks passed — program Region 7
+        configure_region(7, desc.stack_base, desc.size_pow2,
+                         AP_ALL_RW, /*execute_never=*/true, /*is_device=*/false);
+    }
+
+    // Compatibility wrapper for callers that have already validated parameters.
     // 动态更新用户任务的专属沙盒区域（在进程上下文切换 PendSV 时被迅速调用）
-    void update_user_sandbox(uintptr_t stack_base, uint8_t size_power_of_2) {
+    void update_user_sandbox(uintptr_t stack_base, uint8_t size_power_of_2) noexcept {
         // 使用 Region 7 作为当前运行用户的动态栈沙盒以避免与可能的 Region 2 冲突
         configure_region(7, stack_base, size_power_of_2, AP_ALL_RW, true, false);
     }

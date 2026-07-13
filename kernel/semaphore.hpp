@@ -8,8 +8,8 @@ private:
     int count_;
     uint32_t wait_mask_ = 0;
 
-    inline void disable_interrupts() { __asm__ volatile ("cpsid i" : : : "memory"); }
-    inline void enable_interrupts()  { __asm__ volatile ("cpsie i" : : : "memory"); }
+    inline void disable_interrupts() { Arch::disable_interrupts(); }
+    inline void enable_interrupts()  { Arch::enable_interrupts(); }
 
 public:
     // 初始化时指定资源的初始数量

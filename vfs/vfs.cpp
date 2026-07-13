@@ -40,6 +40,11 @@ void VfsManager::init() {
 
 bool VfsManager::mount(const char* path, VNode* vnode) {
     LockGuard lock(vfs_mutex_);
+    if (!path || !vnode) return false;
+    // 防路径遍历
+    for (const char* p = path; *p; p++) {
+        if (p[0] == '.' && p[1] == '.') return false;
+    }
     if (mount_count_ >= MAX_MOUNT_POINTS) return false;
     str_copy(mounts_[mount_count_].path, path, sizeof(mounts_[0].path));
     mounts_[mount_count_].vnode = vnode;
@@ -49,6 +54,17 @@ bool VfsManager::mount(const char* path, VNode* vnode) {
 
 int VfsManager::open(const char* path, int flags) {
     LockGuard lock(vfs_mutex_);
+    if (!path) return -1;
+    
+    // 防路径遍历及长度限制
+    int path_len = 0;
+    bool has_traversal = false;
+    for (const char* p = path; *p; p++, path_len++) {
+        if (p[0] == '.' && p[1] == '.') has_traversal = true;
+        if (path_len >= 255) return -1; // Path too long
+    }
+    if (has_traversal) return -1;
+
     VNode* target = nullptr;
     int max_prefix_len = 0;
     
@@ -95,6 +111,7 @@ int VfsManager::open(const char* path, int flags) {
 int VfsManager::read(int fd, char* buf, int len) {
     LockGuard lock(vfs_mutex_);
     if (fd < 0 || fd >= MAX_OPEN_FILES || !fd_table_[fd].used) return -1;
+    if (!buf || len < 0 || len > 1048576) return -1; // 最大单次读写 1MB
     // 透传 offset 给具体节点，并自动推进游标
     int bytes = fd_table_[fd].vnode->read(buf, len, fd_table_[fd].offset, fd_table_[fd].priv);
     if (bytes > 0) fd_table_[fd].offset += bytes;
@@ -104,6 +121,7 @@ int VfsManager::read(int fd, char* buf, int len) {
 int VfsManager::write(int fd, const char* buf, int len) {
     LockGuard lock(vfs_mutex_);
     if (fd < 0 || fd >= MAX_OPEN_FILES || !fd_table_[fd].used) return -1;
+    if (!buf || len < 0 || len > 1048576) return -1;
     int bytes = fd_table_[fd].vnode->write(buf, len, fd_table_[fd].offset, fd_table_[fd].priv);
     if (bytes > 0) fd_table_[fd].offset += bytes;
     return bytes;

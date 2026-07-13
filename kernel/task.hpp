@@ -4,6 +4,7 @@
 #include <stdint.h>
 #include <stddef.h>
 #include "arch_api.hpp" // 引入底层架构 HAL 接口
+#include "mpu.hpp"      // For SandboxDescriptor
 
 class Mutex; // 前向声明，用于优先级继承
 
@@ -68,7 +69,20 @@ struct TaskControlBlock {
     
     void*         held_mutexes;             // 持有的互斥锁链表头 (for PI)
     Mutex*        waiting_on_mutex;         // 当前正在等待的互斥锁 (for transitive PI)
+
+    // ========================================================
+    // 3. 【栈水印（Stack Canary）】
+    //    create_task() 在栈底（最低地址）写入 STACK_CANARY 哨兵字。
+    //    tick_update() 每 tick 检测其是否被覆盖。
+    // ========================================================
+    uint32_t* stack_canary_ptr;  // 指向栈底 word（stack_space[0]）
+
+    // ========================================================
+    // 4. 【MPU Sandbox】(Verified descriptor with CRC32)
+    // ========================================================
+    SandboxDescriptor mpu_sandbox;
 };
+
 
 // 前向声明：供 PendSV 汇编读取的两个全局 TCB 指针
 // 遵循 I.2: 最小化非 const 全局变量，此处为架构必需
@@ -207,6 +221,11 @@ public:
         tcb.stack_base = static_cast<uint32_t>(reinterpret_cast<uintptr_t>(stack_space));
         tcb.size_pow2 = size_pow2;
         
+        tcb.mpu_sandbox.stack_base = tcb.stack_base;
+        tcb.mpu_sandbox.size_pow2  = size_pow2;
+        tcb.mpu_sandbox.version    = 1;
+        tcb.mpu_sandbox.seal();
+
         tcb.next_ready = -1;
         tcb.prev_ready = -1;
 
@@ -217,6 +236,13 @@ public:
         for (int i = 0; i < 16; i++) tcb.signal_handlers[i] = nullptr;
         tcb.held_mutexes = nullptr;
         tcb.waiting_on_mutex = nullptr;
+
+        // 【栈水印】在栈底（数组首元素，栈向下增长所以首地址 = 最低地址）写入哨兵
+        static constexpr uint32_t STACK_CANARY = 0xDEADBEEFu;
+        tcb.stack_canary_ptr = stack_space;  // stack_space[0] = 栈底
+        if (tcb.stack_canary_ptr != nullptr) {
+            *tcb.stack_canary_ptr = STACK_CANARY;
+        }
 
         // 调用 HAL 接口完成 Cortex-M4 栈帧伪造，与具体架构解耦
         tcb.stack_ptr = Arch::init_thread_stack(task_entry, stack_space, stack_size);
@@ -320,6 +346,16 @@ public:
     // 由 SysTick 中断调用：滴答计数器驱动唤醒逻辑
     void tick_update() {
         for (uint32_t i = 0; i < task_count; i++) {
+            // 【栈水印检测】先验哨兵再处理休眠
+            if (tasks[i].stack_canary_ptr != nullptr &&
+                *tasks[i].stack_canary_ptr != 0xDEADBEEFu &&
+                tasks[i].state != TaskState::Terminated) {
+                // 栈底哨兵被覆盖 — 立即终止该任务，防止内核数据被破坏
+                tasks[i].state = TaskState::Terminated;
+                // SecurityMonitor 将在下一次心跳周期检测到并记录
+                continue;
+            }
+
             if (tasks[i].state == TaskState::Sleeping) {
                 if (tasks[i].sleep_ticks > 0) {
                     tasks[i].sleep_ticks--;

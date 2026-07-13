@@ -10,6 +10,52 @@
 
 volatile uint32_t isr_enter_cycle = 0;
 
+// ────────────────────────────────────────────────────────────────
+// SyscallValidator — kernel-side parameter validation for SVC calls.
+// All functions are noexcept; they never throw or call user code.
+// ────────────────────────────────────────────────────────────────
+namespace SyscallValidator {
+
+// Flash region boundaries exposed by the linker script.
+// Defined as weak to allow host-test stubs to override them.
+extern "C" __attribute__((weak)) uint32_t _flash_start;
+extern "C" __attribute__((weak)) uint32_t _flash_end;
+
+// Validate that [ptr, ptr+len) lies entirely within either:
+//   (a) the calling task’s stack region, or
+//   (b) the read-only Flash segment (for string literals).
+// Returns true if the range is safe to dereference in kernel context.
+[[nodiscard]] inline bool validate_user_ptr(
+        const void* ptr, size_t len,
+        uintptr_t task_stack_base, size_t task_stack_size) noexcept
+{
+    if (!ptr) return false;
+    const uintptr_t p   = reinterpret_cast<uintptr_t>(ptr);
+    const uintptr_t end = p + len;
+    // Integer wrap-around check
+    if (end < p) return false;
+
+    // (a) Within the task’s own stack
+    if (task_stack_size > 0) {
+        const bool in_stack = (p >= task_stack_base) &&
+                              (end <= task_stack_base + task_stack_size);
+        if (in_stack) return true;
+    }
+
+    // (b) Within read-only Flash (for string literals passed as SYS_PRINT arg)
+    const uintptr_t flash_s = reinterpret_cast<uintptr_t>(&_flash_start);
+    const uintptr_t flash_e = reinterpret_cast<uintptr_t>(&_flash_end);
+    if (flash_s != flash_e) {  // linker symbols valid
+        const bool in_flash = (p >= flash_s) && (end <= flash_e);
+        if (in_flash) return true;
+    }
+
+    return false;
+}
+
+}  // namespace SyscallValidator
+
+
 // 供 PendSV 汇编读取的两个全局 TCB 指针
 // 声明为非 volatile：汇编直接使用符号地址，编译器临界区内通过 Arch:: 保护
 extern "C" {
@@ -20,7 +66,7 @@ extern "C" {
     // 由 PendSV_Handler 调用的 MPU 动态沙盒切换
     void mpu_switch_sandbox(TaskControlBlock* next) {
         if (next && next->size_pow2 > 0) {
-            MPU::instance().update_user_sandbox(next->stack_base, next->size_pow2);
+            MPU::instance().update_user_sandbox_verified(next->mpu_sandbox);
         }
     }
 
@@ -42,22 +88,52 @@ extern "C" {
     // ================================================================
     void SVC_Handler_C(InterruptFrame* frame) {
         isr_enter_cycle = Arch::get_cycle();
-        // 通过 PC 回溯到 SVC 指令，提取 8 位系统调用号
+        // 通过 PC 回溔到 SVC 指令，提取 8 位系统调用号
         const uint16_t svc_instr = reinterpret_cast<const uint16_t*>(frame->pc)[-1];
         const uint8_t  svc_number = static_cast<uint8_t>(svc_instr & 0xFF);
 
+        // 获取当前任务的栈边界，用于参数指针校验
+        const TaskControlBlock* cur = Scheduler::instance().get_current_tcb();
+        const uintptr_t stack_base  = cur ? static_cast<uintptr_t>(cur->stack_base) : 0u;
+        const size_t    stack_size  =
+            cur ? (static_cast<size_t>(1) << cur->size_pow2) : 0u;
+
         switch (svc_number) {
-            case SYS_PRINT: // SysCall: 串口输出（在内核特权态安全调用）
-                uart_puts(reinterpret_cast<const char*>(frame->r0));
+            case SYS_PRINT: { // SysCall: 串口输出（在内核特权态安全调用）
+                // 【参数校验】：r0 指针必须属于该任务的栈或 Flash 只读段
+                // 字符串最长限制 256 字节（防止无界读）
+                constexpr size_t MAX_PRINT_LEN = 256u;
+                const char* str = reinterpret_cast<const char*>(frame->r0);
+                if (!SyscallValidator::validate_user_ptr(
+                        str, MAX_PRINT_LEN, stack_base, stack_size)) {
+                    uart_puts("[Kernel] SYS_PRINT: invalid ptr rejected\n");
+                    break;
+                }
+                uart_puts(str);
                 break;
+            }
             case SYS_YIELD: // SysCall: 任务 Yield
                 Scheduler::instance().schedule();
                 break;
-            case SYS_SLEEP: // SysCall: 任务 Sleep
-                Scheduler::instance().sleep_ms(frame->r0);
+            case SYS_SLEEP: { // SysCall: 任务 Sleep
+                // 【参数校验】：sleep 时长不超过 10 分钟（600,000 ms）
+                constexpr uint32_t MAX_SLEEP_MS = 600'000u;
+                const uint32_t ms = frame->r0;
+                if (ms > MAX_SLEEP_MS) {
+                    uart_puts("[Kernel] SYS_SLEEP: duration out of range\n");
+                    break;
+                }
+                Scheduler::instance().sleep_ms(ms);
                 break;
+            }
             default:
-                uart_puts("[Kernel] Unknown SVC ID!\n");
+                uart_puts("[Kernel] Unknown SVC — possible exploit attempt\n");
+                // 终止违规任务而非整个系统
+                if (cur) {
+                    Scheduler::instance().set_task_state(
+                        cur->id, TaskState::Terminated);
+                    Scheduler::instance().schedule();
+                }
                 break;
         }
     }

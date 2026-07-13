@@ -6,49 +6,183 @@
 #include "posix.hpp"
 #include <string.h>
 #include "../utils/json_parser.hpp"
+#include "../utils/hmac_sha256.hpp"   // HmacSha256, Crc32
 #include "device_route_table.hpp"
 #include "../metrics/metrics.hpp"
-
 #include "../kernel/timer.hpp"
+
 
 class DistributedSoftBus {
 private:
     int udp_socket_;
-    static constexpr uint16_t SOFTBUS_PORT = 8899; // 软总线专属发现端口
+    static constexpr uint16_t SOFTBUS_PORT = 8899;
 
-    // ========================================================
-    // HMAC-SHA256 验证（安全封闭状态）
-    //
-    // 当前状态：注册路径已安全关闭。
-    // 原实现只是将 hash 与写死字符串 "hmac_sha256_result" 做 strcmp，
-    // challenge（device_id）完全未参与计算，任何设备重放该固定 JSON
-    // 即可绕过验证——这是一个高危安全漏洞，不是占位符。
-    //
-    // 启用条件：接入真实 HMAC-SHA256 库（如 mbedTLS hmac_sha256()），
-    // 用 challenge 和预共享密钥计算 HMAC，再与 hash 比对，
-    // 然后删除此注释并移除 (void) 抑制。
-    // ========================================================
-    bool verify_hmac_sha256(const char* challenge, const char* hash) {
-        (void)challenge; // 真实实现中作为 HMAC 消息输入
-        (void)hash;      // 真实实现中与 HMAC 计算结果比对
-        // 注册路径已封闭：返回 false 直到真实 HMAC-SHA256 实现就绪。
-        return false;
+    // ────────────────────────────────────────────────────────
+    // 密鑰管理 — 支持双槽轮换
+    // ────────────────────────────────────────────────────────
+    struct KeySlot {
+        uint8_t  key[32];   // HMAC-SHA256 pre-shared key
+        uint32_t version;   // Monotonically increasing version
+        bool     valid;
+    };
+    KeySlot key_slots_[2]{};
+    uint8_t active_slot_ = 0;
+
+    // Provision the active key slot.  Call once at init from a trusted source
+    // (e.g., provisioned at manufacturing or via secure channel).
+    void set_key(const uint8_t key[32], uint32_t version) noexcept {
+        const uint8_t slot = active_slot_ ^ 1u;  // write to inactive slot
+        memcpy(key_slots_[slot].key, key, 32u);
+        key_slots_[slot].version = version;
+        key_slots_[slot].valid   = true;
+        active_slot_ = slot;  // atomic flip (single-core bare-metal)
     }
 
-    bool validate_cap(const char* cap) {
-        int len = strnlen(cap, 64);
+    // ────────────────────────────────────────────────────────
+    // 防重放：滑动窗口序列号 (seq_num)
+    // ────────────────────────────────────────────────────────
+    static constexpr int REPLAY_WINDOW = 32;
+    struct ReplayEntry {
+        char     device_id[32];
+        uint32_t last_seq;
+        bool     valid;
+    };
+    ReplayEntry replay_table_[16]{};
+
+    [[nodiscard]] bool check_and_update_seq(
+            const char* device_id, uint32_t seq) noexcept
+    {
+        for (auto& e : replay_table_) {
+            if (e.valid && strncmp(e.device_id, device_id, 31) == 0) {
+                if (seq <= e.last_seq)         return false;  // replay!
+                if (seq > e.last_seq + static_cast<uint32_t>(REPLAY_WINDOW))
+                                               return false;  // gap too large
+                e.last_seq = seq;
+                return true;
+            }
+        }
+        // New device: find empty slot
+        for (auto& e : replay_table_) {
+            if (!e.valid) {
+                strncpy(e.device_id, device_id, 31);
+                e.device_id[31] = '\0';
+                e.last_seq = seq;
+                e.valid    = true;
+                return true;
+            }
+        }
+        return false;  // table full, reject
+    }
+
+    // ────────────────────────────────────────────────────────
+    // 速率限制：令牌桶 (Token Bucket) 每源 IP
+    // ────────────────────────────────────────────────────────
+    struct RateBucket {
+        char     ip[16];
+        uint32_t tokens;              // Current token count
+        uint32_t last_refill_tick;    // Tick of last refill
+        bool     valid;
+        static constexpr uint32_t CAPACITY    = 10u;  // Bucket capacity
+        static constexpr uint32_t RATE_PER_S  =  1u;  // Tokens per second
+    };
+    RateBucket rate_buckets_[8]{};
+
+    [[nodiscard]] bool rate_limit_pass(
+            const char* ip, uint32_t now_tick) noexcept
+    {
+        for (auto& b : rate_buckets_) {
+            if (b.valid && strncmp(b.ip, ip, 15) == 0) {
+                // Refill: 1 token per 1000 ticks (1 Hz at 1 kHz tick rate)
+                const uint32_t elapsed = now_tick - b.last_refill_tick;
+                const uint32_t added   = elapsed / 1000u * RateBucket::RATE_PER_S;
+                if (added > 0u) {
+                    b.tokens = (b.tokens + added < RateBucket::CAPACITY)
+                             ? b.tokens + added : RateBucket::CAPACITY;
+                    b.last_refill_tick = now_tick;
+                }
+                if (b.tokens == 0u) return false;  // rate-limited
+                b.tokens--;
+                return true;
+            }
+        }
+        // New IP: register
+        for (auto& b : rate_buckets_) {
+            if (!b.valid) {
+                strncpy(b.ip, ip, 15); b.ip[15] = '\0';
+                b.tokens           = RateBucket::CAPACITY - 1u;
+                b.last_refill_tick = now_tick;
+                b.valid            = true;
+                return true;
+            }
+        }
+        return false;  // table full
+    }
+
+    // ────────────────────────────────────────────────────────
+    // HMAC-SHA256 验证 + 防重放序列号混入
+    //
+    // hmac_hex : 64-char hex-encoded HMAC-SHA256 digest
+    // challenge: device_id string
+    // seq      : uint32 sequence number (big-endian 4 bytes mixed into HMAC msg)
+    // ────────────────────────────────────────────────────────
+    [[nodiscard]] bool verify_hmac(
+            const char* challenge, const char* hmac_hex,
+            uint32_t seq) noexcept
+    {
+        if (!challenge || !hmac_hex) return false;
+        const KeySlot& slot = key_slots_[active_slot_];
+        if (!slot.valid) return false;
+
+        // Build HMAC message: challenge bytes || seq (4 bytes big-endian)
+        const size_t chal_len = strnlen(challenge, 31u);
+        const uint8_t seq_bytes[4] = {
+            static_cast<uint8_t>(seq >> 24),
+            static_cast<uint8_t>(seq >> 16),
+            static_cast<uint8_t>(seq >>  8),
+            static_cast<uint8_t>(seq)
+        };
+
+        HmacSha256 ctx;
+        ctx.init(slot.key, 32u);
+        ctx.update(reinterpret_cast<const uint8_t*>(challenge), chal_len);
+        ctx.update(seq_bytes, 4u);
+        uint8_t computed[32]{};
+        ctx.finish(computed);
+
+        // Decode the 64-char hex string into 32 bytes
+        uint8_t received[32]{};
+        for (int i = 0; i < 32; i++) {
+            auto hex_nibble = [](char c) -> int {
+                if (c >= '0' && c <= '9') return c - '0';
+                if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+                if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+                return -1;
+            };
+            const int hi = hex_nibble(hmac_hex[i*2]);
+            const int lo = hex_nibble(hmac_hex[i*2+1]);
+            if (hi < 0 || lo < 0) return false;  // invalid hex
+            received[i] = static_cast<uint8_t>((hi << 4) | lo);
+        }
+
+        // Constant-time comparison (prevent timing side-channel)
+        return HmacSha256::constant_time_eq(computed, received, 32u);
+    }
+
+    bool validate_cap(const char* cap) noexcept {
+        int len = static_cast<int>(strnlen(cap, 64));
         if (len == 0 || len == 64) return false;
         for (int i = 0; i < len; i++) {
             char c = cap[i];
-            if (!((c >= 'a' && c <= 'z') || c == '_' || c == ',' || c == '[' || c == ']' || c == '"')) {
+            if (!((c >= 'a' && c <= 'z') || c == '_' || c == ',' ||
+                   c == '[' || c == ']' || c == '"')) {
                 return false;
             }
         }
         return true;
     }
 
-    bool validate_device_id(const char* id) {
-        int len = strnlen(id, 32);
+    bool validate_device_id(const char* id) noexcept {
+        int len = static_cast<int>(strnlen(id, 32));
         if (len == 0 || len == 32) return false;
         for (int i = 0; i < len; i++) {
             char c = id[i];
@@ -58,6 +192,7 @@ private:
         }
         return true;
     }
+
 
 public:
     static DistributedSoftBus& instance() {
@@ -96,19 +231,23 @@ public:
 
         struct sockaddr_in broadcast_addr;
         memset(&broadcast_addr, 0, sizeof(broadcast_addr));
-        broadcast_addr.sin_family = AF_INET;
-        broadcast_addr.sin_port = lwip_htons(SOFTBUS_PORT);
-        broadcast_addr.sin_addr.s_addr = lwip_htonl(INADDR_BROADCAST); // 255.255.255.255
+        broadcast_addr.sin_family      = AF_INET;
+        broadcast_addr.sin_port        = lwip_htons(SOFTBUS_PORT);
+        broadcast_addr.sin_addr.s_addr = lwip_htonl(INADDR_BROADCAST);
 
         // 构建超级终端设备凭证 (JSON/RPC 风格)
         // auth 字段使用 "DISABLED" 标记，防止本机信标被其他运行旧版本的
         // 节点误认为合法（旧版本固定接受 "hmac_sha256_result"）。
         // 真实 HMAC 实现就绪后，此字段应替换为动态计算的 HMAC-SHA256 值。
-        const char* beacon_payload = "{\"event\":\"beacon\",\"device_id\":\"aurorawatch\",\"cap\":[\"display\",\"touch\"],\"auth\":\"DISABLED\"}";
-        
-        lwip_sendto(udp_socket_, beacon_payload, strlen(beacon_payload), 0,
+        const char* beacon_payload =
+            "{\"event\":\"beacon\",\"device_id\":\"aurorawatch\","
+            "\"cap\":[\"display\",\"touch\"],\"auth\":\"DISABLED\"}";
+
+        lwip_sendto(udp_socket_, beacon_payload,
+                    strlen(beacon_payload), 0,
                     (struct sockaddr*)&broadcast_addr, sizeof(broadcast_addr));
     }
+
 
     // ========================================================
     // 软总线监听线程核心逻辑 (阻塞接收网络报文)
@@ -125,35 +264,51 @@ public:
         while (true) {
             int bytes = lwip_recvfrom(udp_socket_, recv_buf, sizeof(recv_buf) - 1, 0,
                                       (struct sockaddr*)&remote_addr, &addr_len);
-            
+
             if (bytes > 0) {
                 recv_buf[bytes] = '\0';
-                
+
                 char ip_str[16];
-                ip4addr_ntoa_r((const ip4_addr_t*)&remote_addr.sin_addr, ip_str, sizeof(ip_str));
+                ip4addr_ntoa_r((const ip4_addr_t*)&remote_addr.sin_addr,
+                               ip_str, sizeof(ip_str));
 
-                // ========================================================
-                // 核心：调用零开销 JSON 解析器拆解 UDP 报文！
-                // ========================================================
+                // ─ 速率限制：每源 IP 令牌桶检查 ───────────────
+                const uint32_t now_tick =
+                    TimerManager::instance().get_current_tick();
+                if (!rate_limit_pass(ip_str, now_tick)) {
+                    // Silently drop — DoS mitigation
+                    Metrics::inc_net_drop();
+                    continue;
+                }
+
+                // ─ JSON 解析 ─────────────────────────────────
                 JsonParser parser(recv_buf);
-                char event_type[32] = {0};
-                char device_id[32] = {0};
-                char cap_array[64] = {0};
-                char auth_token[64] = {0};
+                char event_type[32]  = {0};
+                char device_id[32]   = {0};
+                char cap_array[64]   = {0};
+                char auth_token[65]  = {0};  // 64-char hex HMAC + NUL
+                char seq_str[12]     = {0};  // uint32 as decimal string
 
-                // 只处理 "event":"beacon" 的心跳报文，并强制严格验证
-                if (parser.get_string("event", event_type, 32) && strcmp(event_type, "beacon") == 0) {
-                    if (parser.get_string("device_id", device_id, 32) && validate_device_id(device_id) &&
-                        parser.get_raw_value("cap", cap_array, 64) && validate_cap(cap_array) &&
-                        parser.get_string("auth", auth_token, 64) && verify_hmac_sha256(device_id, auth_token)) {
-                        
-                        // 获取系统时间戳
-                        uint32_t current_tick = TimerManager::instance().get_current_tick();
+                if (parser.get_string("event",     event_type, 32) &&
+                    strcmp(event_type, "beacon") == 0 &&
+                    parser.get_string("device_id", device_id,  32) &&
+                    validate_device_id(device_id) &&
+                    parser.get_raw_value("cap",    cap_array,  64) &&
+                    validate_cap(cap_array) &&
+                    parser.get_string("auth",      auth_token, 65) &&
+                    parser.get_string("seq",       seq_str,    12))
+                {
+                    // Parse seq_num
+                    uint32_t seq = 0u;
+                    for (int i = 0; seq_str[i] >= '0' && seq_str[i] <= '9'; i++)
+                        seq = seq * 10u + static_cast<uint32_t>(seq_str[i] - '0');
 
-                        // 全部提取且验签、校验成功！将其扔给超级终端路由表进行智能注册
+                    // 验签 + 防重放
+                    if (verify_hmac(device_id, auth_token, seq) &&
+                        check_and_update_seq(device_id, seq))
+                    {
                         DeviceRouteTable::instance().register_or_update_device(
-                            ip_str, device_id, cap_array, current_tick
-                        );
+                            ip_str, device_id, cap_array, now_tick);
                         Metrics::inc_softbus_register();
                     }
                 }
@@ -161,5 +316,6 @@ public:
         }
     }
 };
+
 
 #endif

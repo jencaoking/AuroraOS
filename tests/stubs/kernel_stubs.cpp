@@ -82,3 +82,6 @@ PowerProfiler& Metrics::get_power_profiler() {
 uint32_t Metrics::get_net_drops() { return 0; }
 uint32_t Metrics::get_softbus_registers() { return 0; }
 uint32_t Metrics::get_heap_defrags() { return 0; }
+namespace Arch {
+    void (*g_arch_test_interrupt_hook)() = nullptr;
+}

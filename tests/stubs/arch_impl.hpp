@@ -19,8 +19,11 @@
 namespace Arch {
 
 // Match declarations in arch_api.hpp exactly (no noexcept, same signature).
+extern void (*g_arch_test_interrupt_hook)();
 inline void disable_interrupts()           {}
-inline void enable_interrupts()            {}
+inline void enable_interrupts()            {
+    if (g_arch_test_interrupt_hook) g_arch_test_interrupt_hook();
+}
 inline uint32_t irq_save()                 { return 0u; }
 inline void irq_restore(uint32_t /*flags*/) {}
 inline void wait_for_interrupt()           {}

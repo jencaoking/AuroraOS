@@ -1,10 +1,22 @@
 #include <gtest/gtest.h>
 #include "mutex.hpp"
+#include "mutex.hpp"
 #include "frame_scheduler_v2.hpp"
+#include "timer.hpp"
+
+void arch_test_interrupt_hook_impl() {
+    // Advance time by 1 tick so that timeouts can occur when tasks are blocked
+    TimerManager::instance().fast_forward_ticks(1);
+    Scheduler::instance().tick_update();
+    if (TimerManager::instance().get_current_tick() % 100000 == 0) {
+        printf("Tick: %u\n", TimerManager::instance().get_current_tick());
+    }
+}
 
 class MutexTest : public ::testing::Test {
 protected:
     void SetUp() override {
+        Arch::g_arch_test_interrupt_hook = arch_test_interrupt_hook_impl;
         Scheduler::instance().init();
         // Create an idle task so the scheduler has something to fall back to
         Scheduler::instance().create_task([](){}, nullptr, 0, TaskPriority::Idle);

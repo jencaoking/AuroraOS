@@ -111,6 +111,7 @@ TEST_F(LuaVmTest, CleanupFreesAllMemory) {
         ASSERT_TRUE(engine.load_app("local a = 'hello world'"));
     } // engine destroyed here (calls lua_close)
     
+    KernelHeap::instance().defragment();
     const std::size_t free_after = KernelHeap::instance().get_free_memory();
     
     // Verify zero memory leaks after closing VM

@@ -75,6 +75,10 @@ TEST_F(HeapTest, AllocateThenFree) {
 
     KernelHeap::instance().deallocate(ptr);
 
+    // Because of lazy coalescing, we must explicitly defragment
+    // to restore the block headers and fully recover the free space.
+    KernelHeap::instance().defragment();
+
     // After freeing the only allocation the heap should report the same
     // free bytes as the initial state.
     EXPECT_EQ(KernelHeap::instance().get_free_memory(), free_before);
