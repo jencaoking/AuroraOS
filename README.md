@@ -109,7 +109,8 @@ auroraOS 坚信"好的架构来自借鉴与融合"。系统不是从零发明一
 - **ST7789 驱动**（miband 分支）：真实 AMOLED 硬件驱动，192×490 分辨率
 - **输入事件子系统**：统一 InputEvent 抽象，触摸/按键/手势统一处理
 - **页面栈导航器与 GUI 动画引擎**：支持 `ScreenNavigator` 栈式导航（Push/Pop/Replace），右滑手势 Pop，页面生命周期路由，支持平移与渐变转场动画
-- **表盘 Complication 引擎**：借鉴 watchOS，数据驱动 UI，传感器数据变化才触发重绘
+- **表盘 Complication 引擎与动态表盘商店**：借鉴 watchOS，数据驱动 UI，传感器数据变化才触发重绘；并支持 Watch Face Store，可从 LittleFS 文件系统中动态加载并解析运行第三方的 Lua 脚本表盘，支持页面生命周期钩子（on_create/on_show/on_tick/on_gesture）
+- **NFC 卡模拟子系统**：设计底层数据流通道，支持 ISO14443A 标准 Card Emulation (CE) 模式，处理 APDU 数据，实现公交卡 (Transit) 与门禁卡 (Door Key) 的逻辑路由与 Notification 消息提示联动
 
 ### 📦 应用与脚本
 
@@ -637,21 +638,19 @@ python scripts/genconfig.py
 - [x] 蓝牙 Security Mode 1 Level 3 配对认证与 Lua 签名验签
 - [x] 蓝牙状态联动的智能 Tickless 睡眠决策与休眠窗口动态调节
 
-### Phase 3: 手表智能化（12-18 个月）— 📅 部分提前
-
+### Phase 3: 手表智能化（12-18 个月）— 🎉 100% 完成
 - [x] 意图引擎（IntentEngine，规则决策）
 - [x] 应用框架 + 生命周期（AppControlBlock）
 - [x] 小程序框架（MiniProgramEngine + Lua 5.4.6）
 - [x] 分布式软总线（DistributedSoftBus）
-- [x] 运动健康算法框架 (PPG心率数字滤波、基于三轴加速度计步算法与低功耗睡眠监测)
+- [x] 运动健康算法框架 (PPG心率数字滤波、基于三轴加速度计计步算法与低功耗睡眠监测)
 - [x] 通知系统与消息队列 Hub (统一数据抽象、优先级队列与 OLED 全屏/悬浮通知弹窗)
-- [ ] NFC
-- [ ] 表盘商店
+- [x] NFC 卡模拟子系统（卡模拟、ISO14443A/APDU 通道与 Transit/Door 路由）
+- [x] 表盘商店（支持 LittleFS VFS 动态加载与渲染第三方 Lua 表盘）
 - [x] OTA 无线升级与 A/B 镜像切换 (Flash分区表、BLE固件传输与断电安全回滚)
 - [x] 安全启动 (Secure Boot，上电 Ed25519 签名验证 Root of Trust)
 - [x] 页面栈导航器与 GUI 动画引擎 (ScreenNavigator 栈式导航、右滑手势 Pop、过渡平移/渐变动画)
 - [x] ELF 重定位解析与 Lua UI 深度绑定 (R_ARM_ABS32 / R_ARM_THM_CALL 动态解析与 Lua 触控/路由绑定)
-
 ### Phase 4: 手机探索（18-36 个月）— 🌌 规划中
 
 - [ ] MMU 虚拟内存（Cortex-A）
