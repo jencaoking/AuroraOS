@@ -446,6 +446,11 @@ public:
     [[nodiscard]] int  pending_count() const noexcept { return queue_.size(); }
     [[nodiscard]] bool has_pending()   const noexcept { return !queue_.empty(); }
 
+    void clear() noexcept {
+        Notification dummy;
+        while (queue_.pop(dummy)) {}
+    }
+
 private:
     NotificationCenter() noexcept : overlay_{nullptr} {}
 

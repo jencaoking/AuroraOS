@@ -176,8 +176,8 @@ public:
                     if (time_since_step_ms_ >= kMinStepIntervalMs) {
                         ++total_steps_;
                         update_dynamic_threshold(current_peak_mag_);
-                        time_since_step_ms_ = 0;
                     }
+                    time_since_step_ms_ = 0;
                     current_peak_mag_ = 0;
                     step_state_ = State::stable;
                 }
@@ -239,8 +239,8 @@ private:
 
         if (peak_count_ > 0) {
             const int32_t mean = static_cast<int32_t>(peak_sum_ / peak_count_);
-            dynamic_high_ = (mean * 12) / 10; // 1.2× 均值
-            dynamic_low_  = (mean *  8) / 10; // 0.8× 均值
+            dynamic_high_ = (mean * 85) / 100; // 0.85× 均值
+            dynamic_low_  = (mean * 60) / 100; // 0.6× 均值
         }
     }
 

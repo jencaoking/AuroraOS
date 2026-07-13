@@ -238,6 +238,7 @@ protected:
     void TearDown() override {
         // 注销 overlay，避免跨测试用例污染
         NotificationCenter::instance().set_overlay(nullptr);
+        NotificationCenter::instance().clear();
     }
 
     Notification make_notif(NotificationPriority p, uint32_t ts = 1000) {
@@ -282,16 +283,16 @@ TEST_F(NotificationCenterTest, DismissCurrentShowsNextFromQueue) {
 }
 
 TEST_F(NotificationCenterTest, OnTickDrivesBannerAutoDismissAndDispatch) {
-    // 第一次 tick 时 overlay 是可见的（banner），结束后变不可见
-    Notification queued = make_notif(NotificationPriority::low);
-    NotificationCenter::instance().post(queued); // 入队（不显示，overlay 不存在）
-
-    // 模拟 overlay 状态转换: tick() 调用后变为不可见
+    // 模拟 overlay 状态转换: 初始为可见，tick() 调用后变为不可见
     bool visible = true;
     ON_CALL(*mock_overlay_, is_visible())
         .WillByDefault([&visible]() { return visible; });
     ON_CALL(*mock_overlay_, tick(3001u))
         .WillByDefault([&visible](uint32_t) { visible = false; });
+
+    // 第一次 tick 时 overlay 是可见的（banner），入队时不应立即显示
+    Notification queued = make_notif(NotificationPriority::low);
+    NotificationCenter::instance().post(queued); // 入队
 
     EXPECT_CALL(*mock_overlay_, tick(3001u)).Times(1);
     EXPECT_CALL(*mock_overlay_, show(_)).Times(1); // 下一条自动弹出
