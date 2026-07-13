@@ -14,13 +14,14 @@ enum class FirmwareStatus : uint32_t {
     CORRUPT        = 0xDEADBEEF
 };
 
+// Now 128 bytes total
 struct FirmwareHeader {
-    uint32_t magic;
-    uint32_t version;
-    uint32_t image_size;
-    uint32_t checksum; // CRC32
-    FirmwareStatus status;
-    uint32_t reserved[3]; // Pad to 32 bytes
+    uint32_t magic;              // 4 bytes
+    uint32_t version;            // 4 bytes
+    uint32_t image_size;         // 4 bytes
+    FirmwareStatus status;       // 4 bytes
+    uint8_t  signature[64];      // 64 bytes (Ed25519)
+    uint32_t reserved[12];       // 48 bytes -> 4 + 4 + 4 + 4 + 64 + 48 = 128 bytes
 };
 
 } // namespace aurora

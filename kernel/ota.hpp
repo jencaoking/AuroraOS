@@ -10,20 +10,18 @@ class OtaManager {
 public:
     OtaManager();
 
-    // Begin an OTA update, erasing the staging partition
-    bool begin_update();
-
-    // Write a chunk of data to the staging partition
-    bool write_chunk(uint32_t offset, const uint8_t* data, size_t size);
-
-    // Commit the update, writing the firmware header and marking as UPDATE_PENDING
-    bool commit_update(uint32_t image_size, uint32_t expected_crc, uint32_t version);
+    // Unpack firmware from a file in VFS (LittleFS) and write it to the Staging partition
+    // After unpacking, it verifies the Ed25519 signature.
+    // If successful, it marks the partition as UPDATE_PENDING.
+    bool unpack_from_vfs(const char* filepath);
 
     // Trigger a system reboot to apply the update
     void reboot();
 
 private:
-    uint32_t calculate_crc32(const uint8_t* data, uint32_t length);
+    bool verify_signature(uint32_t part_b_offset, uint32_t image_size, const uint8_t* expected_signature);
+    void erase_partition(uint32_t start_addr, uint32_t size);
+    void write_flash_word(uint32_t address, uint32_t data);
 };
 
 } // namespace aurora

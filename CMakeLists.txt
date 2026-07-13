@@ -123,12 +123,13 @@ list(REMOVE_ITEM LUA_SOURCES
     "${CMAKE_SOURCE_DIR}/3rdparty/lua/linit.c"
 )
 list(APPEND SOURCES ${LUA_SOURCES})
+list(APPEND SOURCES 3rdparty/ed25519/ed25519.c)
 
 add_executable(auroraOS.elf ${SOURCES})
 
 # Bootloader target
 if(BOARD STREQUAL "lm3s6965-qb")
-    add_executable(bootloader.elf bootloader/boot_main.cpp boot/boot.S)
+    add_executable(bootloader.elf bootloader/boot_main.cpp boot/boot.S 3rdparty/ed25519/ed25519.c)
     target_include_directories(bootloader.elf PRIVATE 
         ${CMAKE_SOURCE_DIR}
         ${CMAKE_SOURCE_DIR}/config

@@ -1,8 +1,13 @@
 #include "ota.hpp"
 #include "firmware_header.hpp"
+#include "../config/partition_table.hpp"
+#include "../3rdparty/ed25519/ed25519.h"
+#include "posix.hpp"
 #include <cstring>
 
 namespace aurora {
+
+extern "C" void sys_print(const char* str);
 
 namespace flash_internal {
     constexpr uint32_t FLASH_CTRL_BASE = 0x400FD000;
@@ -25,72 +30,103 @@ namespace flash_internal {
     }
 }
 
-constexpr uint32_t PART_B_OFFSET = 0x00020000;
-constexpr uint32_t PART_SIZE     = 0x00018000; // 96KB
-constexpr uint32_t VECTOR_TABLE_OFFSET = 0x00000100; // 256 bytes
-
 OtaManager::OtaManager() {}
 
-bool OtaManager::begin_update() {
-    for (uint32_t addr = PART_B_OFFSET; addr < PART_B_OFFSET + PART_SIZE; addr += 1024) {
+void OtaManager::erase_partition(uint32_t start_addr, uint32_t size) {
+    for (uint32_t addr = start_addr; addr < start_addr + size; addr += 1024) {
         flash_internal::erase_page(addr);
     }
-    return true;
 }
 
-bool OtaManager::write_chunk(uint32_t offset, const uint8_t* data, size_t size) {
-    if (offset + size > PART_SIZE - VECTOR_TABLE_OFFSET) {
+void OtaManager::write_flash_word(uint32_t address, uint32_t data) {
+    flash_internal::write_word(address, data);
+}
+
+bool OtaManager::verify_signature(uint32_t offset, uint32_t image_size, const uint8_t* expected_signature) {
+    const uint8_t ROOT_PUBLIC_KEY[32] = {
+        0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 
+        0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 
+        0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 
+        0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA
+    };
+    
+    // Message payload starts after the 128-byte header
+    const uint8_t* message = reinterpret_cast<const uint8_t*>(offset + 128);
+    return ed25519_verify(expected_signature, message, image_size, ROOT_PUBLIC_KEY) != 0;
+}
+
+bool OtaManager::unpack_from_vfs(const char* filepath) {
+    int fd = open(filepath, 0);
+    if (fd < 0) {
+        sys_print("[OTA] Failed to open update package\r\n");
         return false;
     }
 
-    uint32_t write_addr = PART_B_OFFSET + VECTOR_TABLE_OFFSET + offset;
-    const uint32_t* word_data = reinterpret_cast<const uint32_t*>(data);
-    size_t words = size / 4;
+    PartitionTable* pt = reinterpret_cast<PartitionTable*>(0x00007000);
+    uint32_t part_b_offset = pt->magic == PT_MAGIC ? pt->part_b.offset : PT_PART_B.offset;
+    uint32_t part_size     = pt->magic == PT_MAGIC ? pt->part_b.size   : PT_PART_B.size;
 
-    for (size_t i = 0; i < words; ++i) {
-        flash_internal::write_word(write_addr + (i * 4), word_data[i]);
-    }
-    return true;
-}
+    // Erase Staging Partition
+    erase_partition(part_b_offset, part_size);
 
-uint32_t OtaManager::calculate_crc32(const uint8_t* data, uint32_t length) {
-    uint32_t crc = 0xFFFFFFFF;
-    for (uint32_t i = 0; i < length; i++) {
-        crc ^= data[i];
-        for (int j = 0; j < 8; j++) {
-            crc = (crc >> 1) ^ (0xEDB88320 & (-(crc & 1)));
-        }
-    }
-    return ~crc;
-}
-
-bool OtaManager::commit_update(uint32_t image_size, uint32_t expected_crc, uint32_t version) {
-    uint32_t actual_crc = calculate_crc32(
-        reinterpret_cast<const uint8_t*>(PART_B_OFFSET + VECTOR_TABLE_OFFSET), 
-        image_size
-    );
-
-    if (actual_crc != expected_crc) {
-        return false;
-    }
-
+    // Read the Header First
     FirmwareHeader header;
-    header.magic = FIRMWARE_MAGIC;
-    header.version = version;
-    header.image_size = image_size;
-    header.checksum = expected_crc;
-    header.status = FirmwareStatus::UPDATE_PENDING;
-    header.reserved[0] = 0;
-    header.reserved[1] = 0;
-    header.reserved[2] = 0;
-
-    const uint32_t* header_words = reinterpret_cast<const uint32_t*>(&header);
-    size_t header_word_count = sizeof(FirmwareHeader) / 4;
-
-    for (size_t i = 0; i < header_word_count; ++i) {
-        flash_internal::write_word(PART_B_OFFSET + (i * 4), header_words[i]);
+    int bytes_read = read(fd, &header, sizeof(FirmwareHeader));
+    if (bytes_read != sizeof(FirmwareHeader) || header.magic != FIRMWARE_MAGIC) {
+        sys_print("[OTA] Invalid firmware header in package\r\n");
+        close(fd);
+        return false;
     }
 
+    if (header.image_size + sizeof(FirmwareHeader) > part_size) {
+        sys_print("[OTA] Image too large for partition\r\n");
+        close(fd);
+        return false;
+    }
+
+    // Write header (But change status to UPDATE_PENDING)
+    header.status = FirmwareStatus::UPDATE_PENDING;
+    uint32_t* header_words = reinterpret_cast<uint32_t*>(&header);
+    for (size_t i = 0; i < sizeof(FirmwareHeader) / 4; ++i) {
+        write_flash_word(part_b_offset + (i * 4), header_words[i]);
+    }
+
+    // Write body in chunks
+    uint8_t buffer[256];
+    uint32_t current_offset = part_b_offset + sizeof(FirmwareHeader);
+    uint32_t remaining = header.image_size;
+
+    while (remaining > 0) {
+        int to_read = remaining > sizeof(buffer) ? sizeof(buffer) : remaining;
+        bytes_read = read(fd, buffer, to_read);
+        if (bytes_read <= 0) break;
+
+        uint32_t* word_buf = reinterpret_cast<uint32_t*>(buffer);
+        uint32_t words = (bytes_read + 3) / 4;
+        for (size_t i = 0; i < words; ++i) {
+            write_flash_word(current_offset + (i * 4), word_buf[i]);
+        }
+        
+        current_offset += bytes_read;
+        remaining -= bytes_read;
+    }
+
+    close(fd);
+
+    if (remaining > 0) {
+        sys_print("[OTA] EOF reached before full image read\r\n");
+        return false;
+    }
+
+    // Verify written payload
+    if (!verify_signature(part_b_offset, header.image_size, header.signature)) {
+        sys_print("[OTA] Signature verification failed\r\n");
+        erase_partition(part_b_offset, part_size); // Clear invalid image
+        return false;
+    }
+
+    sys_print("[OTA] Unpack successful, rebooting...\r\n");
+    reboot();
     return true;
 }
 

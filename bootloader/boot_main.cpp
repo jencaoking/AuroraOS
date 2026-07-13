@@ -1,4 +1,6 @@
 #include "kernel/firmware_header.hpp"
+#include "config/partition_table.hpp"
+#include "3rdparty/ed25519/ed25519.h"
 
 extern "C" {
     extern uint32_t _sidata;
@@ -34,83 +36,93 @@ void write_word(uint32_t address, uint32_t data) {
 
 namespace {
 
-constexpr uint32_t PART_A_OFFSET    = 0x00008000;
-constexpr uint32_t PART_B_OFFSET    = 0x00020000;
-constexpr uint32_t PART_SIZE        = 0x00018000; // 96KB
-constexpr uint32_t VECTOR_TABLE_OFFSET = 0x00000100; // 256 bytes
+const uint8_t ROOT_PUBLIC_KEY[32] = {
+    // 32 bytes mock public key
+    0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 
+    0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 
+    0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 
+    0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA
+};
 
-uint32_t calculate_crc32(const uint8_t* data, uint32_t length) {
-    uint32_t crc = 0xFFFFFFFF;
-    for (uint32_t i = 0; i < length; i++) {
-        crc ^= data[i];
-        for (int j = 0; j < 8; j++) {
-            crc = (crc >> 1) ^ (0xEDB88320 & (-(crc & 1)));
-        }
-    }
-    return ~crc;
+bool verify_firmware(aurora::FirmwareHeader* header, uint32_t offset) {
+    if (header->magic != aurora::FIRMWARE_MAGIC) return false;
+    
+    // Header size is 128 bytes
+    const uint8_t* message = reinterpret_cast<const uint8_t*>(offset + 128);
+    size_t message_len = header->image_size;
+    
+    return ed25519_verify(header->signature, message, message_len, ROOT_PUBLIC_KEY) != 0;
 }
 
 } // namespace
 
 extern "C" void kernel_main() {
     using namespace aurora;
-    
-    FirmwareHeader* part_a = reinterpret_cast<FirmwareHeader*>(PART_A_OFFSET);
-    FirmwareHeader* part_b = reinterpret_cast<FirmwareHeader*>(PART_B_OFFSET);
 
-    // 1. Check if PART_B has an update
-    if (part_b->magic == FIRMWARE_MAGIC && part_b->status == FirmwareStatus::UPDATE_PENDING) {
-        uint32_t crc = calculate_crc32(
-            reinterpret_cast<const uint8_t*>(PART_B_OFFSET + VECTOR_TABLE_OFFSET), 
-            part_b->image_size
-        );
-        
-        if (crc == part_b->checksum) {
-            // OTA Swap (B -> A)
-            for (uint32_t addr = PART_A_OFFSET; addr < PART_A_OFFSET + PART_SIZE; addr += 1024) {
-                flash::erase_page(addr);
-            }
-            
-            uint32_t bytes_to_copy = VECTOR_TABLE_OFFSET + part_b->image_size;
-            uint32_t total_words = (bytes_to_copy + 3) / 4;
-            
-            uint32_t* src = reinterpret_cast<uint32_t*>(PART_B_OFFSET);
-            uint32_t* dst = reinterpret_cast<uint32_t*>(PART_A_OFFSET);
-            for (uint32_t i = 0; i < total_words; ++i) {
-                flash::write_word(reinterpret_cast<uint32_t>(&dst[i]), src[i]);
-            }
-            
-            // Invalidate PART_B
-            flash::erase_page(PART_B_OFFSET);
-        } else {
-            // Invalid OTA image, erase PART_B header
-            flash::erase_page(PART_B_OFFSET);
+    PartitionTable* pt = reinterpret_cast<PartitionTable*>(0x00007000);
+
+    uint32_t part_a_offset = pt->magic == PT_MAGIC ? pt->part_a.offset : PT_PART_A.offset;
+    uint32_t part_b_offset = pt->magic == PT_MAGIC ? pt->part_b.offset : PT_PART_B.offset;
+    uint32_t part_size     = pt->magic == PT_MAGIC ? pt->part_a.size   : PT_PART_A.size;
+
+    FirmwareHeader* part_a = reinterpret_cast<FirmwareHeader*>(part_a_offset);
+    FirmwareHeader* part_b = reinterpret_cast<FirmwareHeader*>(part_b_offset);
+
+    bool a_valid = verify_firmware(part_a, part_a_offset);
+    bool b_valid = verify_firmware(part_b, part_b_offset);
+
+    // If B has a pending update and is valid, or if A is invalid and B is valid (recovery from interrupted swap)
+    if (b_valid && (!a_valid || part_b->status == FirmwareStatus::UPDATE_PENDING)) {
+        // Power-loss safe OTA Swap (B -> A)
+        // 1. Erase A entirely
+        for (uint32_t addr = part_a_offset; addr < part_a_offset + part_size; addr += 1024) {
+            flash::erase_page(addr);
         }
+        
+        // 2. Copy BODY (skip first 128 bytes header)
+        uint32_t words_to_copy = part_b->image_size / 4;
+        if (part_b->image_size % 4 != 0) words_to_copy++;
+        
+        uint32_t* src = reinterpret_cast<uint32_t*>(part_b_offset + 128);
+        uint32_t* dst = reinterpret_cast<uint32_t*>(part_a_offset + 128);
+        for (uint32_t i = 0; i < words_to_copy; ++i) {
+            flash::write_word(reinterpret_cast<uint32_t>(&dst[i]), src[i]);
+        }
+        
+        // 3. Write HEADER last to ensure A is marked valid only when completely copied
+        uint32_t* header_src = reinterpret_cast<uint32_t*>(part_b_offset);
+        uint32_t* header_dst = reinterpret_cast<uint32_t*>(part_a_offset);
+        for (uint32_t i = 0; i < 128 / 4; ++i) {
+            // Modify status to VALID
+            uint32_t word = header_src[i];
+            if (i == 3) { // offset 12 is status
+                word = static_cast<uint32_t>(FirmwareStatus::VALID);
+            }
+            flash::write_word(reinterpret_cast<uint32_t>(&header_dst[i]), word);
+        }
+        
+        // Invalidate PART_B
+        flash::erase_page(part_b_offset);
+        
+        // Re-check A
+        a_valid = verify_firmware(part_a, part_a_offset);
     }
 
-    // 2. Secure Boot Verification of PART_A
-    if (part_a->magic == FIRMWARE_MAGIC) {
-        uint32_t crc = calculate_crc32(
-            reinterpret_cast<const uint8_t*>(PART_A_OFFSET + VECTOR_TABLE_OFFSET), 
-            part_a->image_size
-        );
+    if (a_valid) {
+        // Boot PART_A
+        uint32_t vector_table_addr = part_a_offset + 128; // The actual vector table starts after header
         
-        if (crc == part_a->checksum && (part_a->status == FirmwareStatus::VALID || part_a->status == FirmwareStatus::UPDATE_PENDING)) {
-            // Boot PART_A
-            uint32_t vector_table_addr = PART_A_OFFSET + VECTOR_TABLE_OFFSET;
-            
-            volatile uint32_t* SCB_VTOR = reinterpret_cast<uint32_t*>(0xE000ED08);
-            *SCB_VTOR = vector_table_addr;
+        volatile uint32_t* SCB_VTOR = reinterpret_cast<uint32_t*>(0xE000ED08);
+        *SCB_VTOR = vector_table_addr;
 
-            uint32_t app_sp = *reinterpret_cast<uint32_t*>(vector_table_addr);
-            uint32_t app_pc = *reinterpret_cast<uint32_t*>(vector_table_addr + 4);
+        uint32_t app_sp = *reinterpret_cast<uint32_t*>(vector_table_addr);
+        uint32_t app_pc = *reinterpret_cast<uint32_t*>(vector_table_addr + 4);
 
-            asm volatile(
-                "msr msp, %0\n"
-                "bx %1\n"
-                :: "r"(app_sp), "r"(app_pc)
-            );
-        }
+        asm volatile(
+            "msr msp, %0\n"
+            "bx %1\n"
+            :: "r"(app_sp), "r"(app_pc)
+        );
     }
     
     // Fallback: Loop forever
