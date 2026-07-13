@@ -22,6 +22,10 @@ namespace Arch {
     void enable_systick();
     void start_wakeup_timer(uint32_t ticks);
     uint32_t stop_wakeup_timer();
+    
+    // ── 性能分析与度量 ────────────────────────────────────────────
+    uint32_t get_cycle();
+    uint32_t get_cycles_per_us();
 
     // ── 系统节拍定时器 ────────────────────────────────────────────
     // 配置 SysTick 产生周期性中断（系统心跳），hz = 每秒中断次数

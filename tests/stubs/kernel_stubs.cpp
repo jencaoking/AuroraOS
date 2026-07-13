@@ -28,6 +28,7 @@
 #endif
 
 #include "task.hpp"  // Provides TaskControlBlock, Scheduler (resolved via stubs/ path)
+#include "../../metrics/metrics.hpp"
 
 // ---------------------------------------------------------------------------
 // Global TCB volatile pointers (extern "C" declarations in task.hpp).
@@ -39,6 +40,7 @@ extern "C" {
 
 TaskControlBlock* volatile g_current_tcb_ptr = nullptr;
 TaskControlBlock* volatile g_next_tcb_ptr    = nullptr;
+volatile uint32_t g_switch_start_cycle = 0;
 
 // ---------------------------------------------------------------------------
 // frame_scheduler_is_task_allowed — C-linkage stub
@@ -58,3 +60,25 @@ namespace Arch {
     void start_wakeup_timer(uint32_t /*ticks*/) {}
     uint32_t stop_wakeup_timer() { return 0; }
 }
+
+// Metrics stubs
+void Metrics::init() {}
+void Metrics::start_measurement() {}
+void Metrics::stop_measurement() {}
+bool Metrics::is_active() { return false; }
+void Metrics::record(MetricId /*id*/, uint32_t /*value*/) {}
+void Metrics::inc_net_drop() {}
+void Metrics::inc_softbus_register() {}
+void Metrics::inc_heap_defrag() {}
+
+LatencyRecorder& Metrics::get_recorder(MetricId /*id*/) {
+    static LatencyRecorder dummy;
+    return dummy;
+}
+PowerProfiler& Metrics::get_power_profiler() {
+    static PowerProfiler dummy;
+    return dummy;
+}
+uint32_t Metrics::get_net_drops() { return 0; }
+uint32_t Metrics::get_softbus_registers() { return 0; }
+uint32_t Metrics::get_heap_defrags() { return 0; }

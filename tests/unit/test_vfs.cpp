@@ -32,7 +32,7 @@ class FakeVNode : public VNode {
 public:
     static constexpr int kCapacity = 128;
 
-    int read(char* buf, int len, int offset) override {
+    int read(char* buf, int len, int offset, void* /*priv*/ = nullptr) override {
         if (offset < 0 || offset >= write_pos_) return 0;
         const int available = write_pos_ - offset;
         const int to_read   = std::min(len, available);
@@ -40,14 +40,14 @@ public:
         return to_read;
     }
 
-    int write(const char* buf, int len, int /*offset*/) override {
+    int write(const char* buf, int len, int /*offset*/, void* /*priv*/ = nullptr) override {
         if (write_pos_ + len > kCapacity) return -1;  // Full
         std::memcpy(data_.data() + write_pos_, buf, static_cast<std::size_t>(len));
         write_pos_ += len;
         return len;
     }
 
-    int get_size() const override { return write_pos_; }
+    int get_size(void* /*priv*/ = nullptr) const override { return write_pos_; }
 
     // Expose internal buffer for assertions (non-VNode interface, test-only).
     const char* raw_data() const noexcept { return data_.data(); }

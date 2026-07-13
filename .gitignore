@@ -3,6 +3,7 @@
 # Build directories
 build/
 build_tests/
+tests/build2/
 build_qemu/
 build_miband/
 build_miband8/
@@ -55,6 +56,10 @@ compile_commands.json
 # OS temporary files
 .DS_Store
 Thumbs.db
+
+# Test/Metrics artifacts
+metrics.log
+report.md
 
 # Debug symbols
 *.dSYM/

@@ -26,6 +26,15 @@ inline void wait_for_interrupt() noexcept {}
 inline void systick_init(uint32_t /*hz*/) noexcept {}
 inline void trigger_context_switch() noexcept {}
 
+inline uint32_t get_cycle() noexcept {
+    static uint32_t simulated_cycles = 0;
+    return simulated_cycles += 100;
+}
+
+inline uint32_t get_cycles_per_us() noexcept {
+    return 12; // Simulate 12MHz CPU
+}
+
 inline uint32_t* init_thread_stack(void (*/*entry*/)(void),
                                    uint32_t* stack_space,
                                    uint32_t  stack_size) noexcept {

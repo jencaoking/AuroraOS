@@ -3,6 +3,7 @@
 
 #include "task.hpp"
 #include "syscall.hpp"
+#include "timer.hpp"
 
 class Mutex {
 private:
@@ -10,29 +11,60 @@ private:
     TaskControlBlock* owner_ = nullptr;
     uint32_t recursive_count_ = 0;
     Mutex* next_held_ = nullptr;
-    uint8_t waiter_counts_[5] = {0};
     uint32_t wait_mask_ = 0;
 
     uint8_t get_highest_waiter() {
-        for (int i = 4; i >= 0; i--) {
-            if (waiter_counts_[i] > 0) return i;
+        uint8_t max_prio = 0;
+        for (int i = 0; i < 32; i++) {
+            if (wait_mask_ & (1 << i)) {
+                TaskControlBlock* t = Scheduler::instance().get_task_by_id(i);
+                if (t && static_cast<uint8_t>(t->current_priority) > max_prio) {
+                    max_prio = static_cast<uint8_t>(t->current_priority);
+                }
+            }
         }
-        return 0; // No waiters
+        return max_prio;
     }
 
-    void update_owner_priority() {
-        if (!owner_) return;
-        uint8_t max_prio = static_cast<uint8_t>(owner_->base_priority);
-        Mutex* m = static_cast<Mutex*>(owner_->held_mutexes);
-        while (m) {
-            uint8_t highest_waiter = m->get_highest_waiter();
-            if (highest_waiter > max_prio) {
-                max_prio = highest_waiter;
+    static void propagate_priority(TaskControlBlock* start_task) {
+        TaskControlBlock* task = start_task;
+        while (task->waiting_on_mutex) {
+            Mutex* m = task->waiting_on_mutex;
+            TaskControlBlock* owner = m->owner_;
+            if (!owner) break;
+            
+            if (static_cast<uint8_t>(task->current_priority) > static_cast<uint8_t>(owner->current_priority)) {
+                Scheduler::instance().set_task_priority(owner->id, task->current_priority);
+                task = owner;
+            } else {
+                break;
             }
-            m = m->next_held_;
         }
-        if (max_prio != static_cast<uint8_t>(owner_->current_priority)) {
-            Scheduler::instance().set_task_priority(owner_->id, static_cast<TaskPriority>(max_prio));
+    }
+
+    static void recalculate_priority_chain(TaskControlBlock* start_task) {
+        TaskControlBlock* task = start_task;
+        while (task) {
+            uint8_t max_prio = static_cast<uint8_t>(task->base_priority);
+            Mutex* m = static_cast<Mutex*>(task->held_mutexes);
+            while (m) {
+                uint8_t highest_waiter = m->get_highest_waiter();
+                if (highest_waiter > max_prio) {
+                    max_prio = highest_waiter;
+                }
+                m = m->next_held_;
+            }
+            
+            if (max_prio != static_cast<uint8_t>(task->current_priority)) {
+                Scheduler::instance().set_task_priority(task->id, static_cast<TaskPriority>(max_prio));
+                if (task->waiting_on_mutex && task->waiting_on_mutex->owner_) {
+                    task = task->waiting_on_mutex->owner_;
+                } else {
+                    break;
+                }
+            } else {
+                break;
+            }
         }
     }
 
@@ -57,17 +89,17 @@ public:
         }
 
         uint8_t wait_prio = static_cast<uint8_t>(current->current_priority);
-        waiter_counts_[wait_prio]++;
         
-        // 优先级继承
+        current->waiting_on_mutex = this;
+        // 优先级继承传播
         if (owner_ && wait_prio > static_cast<uint8_t>(owner_->current_priority)) {
-            Scheduler::instance().set_task_priority(owner_->id, static_cast<TaskPriority>(wait_prio));
+            propagate_priority(current);
         }
 
         while (true) {
             if (!locked_) {
-                waiter_counts_[wait_prio]--;
                 wait_mask_ &= ~(1 << current->id);
+                current->waiting_on_mutex = nullptr;
                 locked_ = true;
                 owner_ = current;
                 recursive_count_ = 1;
@@ -76,8 +108,8 @@ public:
                 Arch::enable_interrupts();
                 return true;
             } else if (owner_ == current) {
-                waiter_counts_[wait_prio]--;
                 wait_mask_ &= ~(1 << current->id);
+                current->waiting_on_mutex = nullptr;
                 recursive_count_++;
                 Arch::enable_interrupts();
                 return true;
@@ -85,9 +117,9 @@ public:
             
             uint32_t elapsed = TimerManager::instance().get_current_tick() - start_tick;
             if (timeout_ticks != 0xFFFFFFFF && elapsed >= timeout_ticks) {
-                waiter_counts_[wait_prio]--;
                 wait_mask_ &= ~(1 << current->id);
-                update_owner_priority();
+                current->waiting_on_mutex = nullptr;
+                if (owner_) recalculate_priority_chain(owner_);
                 Arch::enable_interrupts();
                 return false;
             }
@@ -127,19 +159,8 @@ public:
                 owner_ = nullptr;
                 locked_ = false;
 
-                // 重新计算原拥有者的优先级 (可能还持有其它被高优先级等待的锁)
-                uint8_t max_prio = static_cast<uint8_t>(old_owner->base_priority);
-                Mutex* m = static_cast<Mutex*>(old_owner->held_mutexes);
-                while (m) {
-                    uint8_t highest_waiter = m->get_highest_waiter();
-                    if (highest_waiter > max_prio) {
-                        max_prio = highest_waiter;
-                    }
-                    m = m->next_held_;
-                }
-                if (max_prio != static_cast<uint8_t>(old_owner->current_priority)) {
-                    Scheduler::instance().set_task_priority(old_owner->id, static_cast<TaskPriority>(max_prio));
-                }
+                // 重新计算原拥有者的优先级并可能传播
+                recalculate_priority_chain(old_owner);
                 
                 // 唤醒最高优先级的等待者
                 if (wait_mask_ != 0) {
@@ -178,9 +199,22 @@ public:
     void force_unlock(TaskControlBlock* target_owner) {
         Arch::disable_interrupts();
         if (owner_ == target_owner) {
+            // 从持有的锁链表中移除自身
+            Mutex** curr_ptr = reinterpret_cast<Mutex**>(&owner_->held_mutexes);
+            while (*curr_ptr) {
+                if (*curr_ptr == this) {
+                    *curr_ptr = this->next_held_;
+                    break;
+                }
+                curr_ptr = &(*curr_ptr)->next_held_;
+            }
+            this->next_held_ = nullptr;
+
             owner_ = nullptr;
             locked_ = false;
             recursive_count_ = 0;
+            
+            recalculate_priority_chain(target_owner);
             if (wait_mask_ != 0) {
                 uint32_t best_id = 0xFFFFFFFF;
                 uint8_t best_prio = 0;

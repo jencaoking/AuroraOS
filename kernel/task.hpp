@@ -5,6 +5,8 @@
 #include <stddef.h>
 #include "arch_api.hpp" // 引入底层架构 HAL 接口
 
+class Mutex; // 前向声明，用于优先级继承
+
 extern "C" bool frame_scheduler_is_task_allowed(uint8_t priority);
 
 // ============================================================
@@ -65,6 +67,7 @@ struct TaskControlBlock {
     SignalHandler signal_handlers[16];      // 信号回调处理函数表
     
     void*         held_mutexes;             // 持有的互斥锁链表头 (for PI)
+    Mutex*        waiting_on_mutex;         // 当前正在等待的互斥锁 (for transitive PI)
 };
 
 // 前向声明：供 PendSV 汇编读取的两个全局 TCB 指针
@@ -213,6 +216,7 @@ public:
         tcb.pending_signals = 0;
         for (int i = 0; i < 16; i++) tcb.signal_handlers[i] = nullptr;
         tcb.held_mutexes = nullptr;
+        tcb.waiting_on_mutex = nullptr;
 
         // 调用 HAL 接口完成 Cortex-M4 栈帧伪造，与具体架构解耦
         tcb.stack_ptr = Arch::init_thread_stack(task_entry, stack_space, stack_size);
