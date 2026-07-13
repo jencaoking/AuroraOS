@@ -101,6 +101,7 @@ set(TEST_SOURCES
     unit/test_ota_unpack.cpp
     unit/test_health_algo.cpp
     unit/test_notification_center.cpp
+    unit/test_screen_navigator.cpp
     integration/test_system_boot.cpp
     stress/test_oom_stress.cpp
 )

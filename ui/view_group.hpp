@@ -77,7 +77,7 @@ public:
                 }
             }
         }
-        return false;
+        return View::handle_gesture(event);
     }
 };
 

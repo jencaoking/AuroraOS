@@ -16,7 +16,7 @@
 #define AURORA_HOST_TEST
 #endif
 
-#include "apps/notification_center.hpp"
+#include "../../apps/notification_center.hpp"
 
 using namespace aurora;
 using ::testing::_;

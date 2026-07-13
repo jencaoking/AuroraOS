@@ -4,6 +4,12 @@
 #include "../3rdparty/ed25519/ed25519.h"
 #include "posix.hpp"
 #include <cstring>
+#include <fcntl.h>
+#ifndef _WIN32
+#include <unistd.h>
+#else
+#include <io.h>
+#endif
 
 namespace aurora {
 

@@ -17,31 +17,7 @@ static constexpr uint16_t COLOR_BG_DARK    = 0x0821; // 深渊黑
 static constexpr uint16_t COLOR_TEXT_ACCENT = 0x07E0; // 极光绿
 static constexpr uint16_t COLOR_TEXT_MUTED  = 0x8410; // 碳灰
 
-// ========================================================
-// 1. GUI 渲染管线接管 (Watch Face)
-// ========================================================
-void WatchApp::build_watch_face_ui() {
-    watch_face_view_ = new UI::ViewGroup(0, 0, DISPLAY_WIDTH, DISPLAY_HEIGHT);
 
-    // 顶部状态栏: 蓝牙和电量
-    UI::TextView* ble_text = new UI::TextView(150, 10, "BLE", 0x07E0, 0, 1);
-    watch_face_view_->add_child(ble_text);
-    
-    // 时间显示 (居中)
-    time_text_ = new UI::TextView(20, 100, "10:09", 0xFFFF, 0, 4);
-    watch_face_view_->add_child(time_text_);
-
-    // 运动健康数据 (底部)
-    hr_text_ = new UI::TextView(80, 250, "HR: 0", 0xF800, 0, 2);
-    watch_face_view_->add_child(hr_text_);
-
-    steps_text_ = new UI::TextView(80, 300, "STP: 0", 0x07E0, 0, 2);
-    watch_face_view_->add_child(steps_text_);
-    
-    // 进度条圆弧
-    UI::ArcProgress* battery_arc = new UI::ArcProgress(96, 400, 40, 85, 0x07E0);
-    watch_face_view_->add_child(battery_arc);
-}
 
 // ========================================================
 // 2. 交互状态路由接管 (7 种手势响应)
@@ -54,30 +30,9 @@ void WatchApp::handle_gesture(GestureType gesture) {
 
     // 将枚举事件封装为不带坐标的简单手势事件并路由给 UI 框架
     UI::GestureEvent event = {gesture, 0, 0};
+    
+    // 新的 ScreenNavigator 接管了 root_view，会统一拦截全局手势（如右滑退出）并向下分发
     UI::UiManager::instance().dispatch_gesture(event);
-
-    // 全局页面手势拦截
-    switch (current_page_) {
-        case WatchPage::WATCH_FACE:
-            if (gesture == GestureType::SWIPE_DOWN) {
-                current_page_ = WatchPage::QUICK_PANEL; // 下拉呼出控制中心
-            } else if (gesture == GestureType::SWIPE_LEFT) {
-                current_page_ = WatchPage::HEART_RATE; // 左滑进入心率检测页面
-            }
-            break;
-        case WatchPage::HEART_RATE:
-            if (gesture == GestureType::SWIPE_RIGHT) {
-                current_page_ = WatchPage::WATCH_FACE; // 右滑返回
-            }
-            break;
-        case WatchPage::QUICK_PANEL:
-            if (gesture == GestureType::SWIPE_UP) {
-                current_page_ = WatchPage::WATCH_FACE; // 上滑返回表盘
-            }
-            break;
-        default:
-            break;
-    }
 }
 
 // ========================================================
@@ -86,6 +41,9 @@ void WatchApp::handle_gesture(GestureType gesture) {
 void WatchApp::on_background_tick(uint32_t delta_ticks) {
     // 驱动电源生命周期引擎
     PowerManager::instance().on_tick(delta_ticks);
+
+    // 驱动 UI 过渡动画引擎
+    UI::ScreenNavigator::instance().on_tick(delta_ticks);
 
     // 模拟时间流逝
     static uint32_t ms_accumulator = 0;
@@ -98,16 +56,8 @@ void WatchApp::on_background_tick(uint32_t delta_ticks) {
             simulated_time_h_ = (simulated_time_h_ + 1) % 24;
         }
         
-        // 更新 UI 时间 (格式 10:09)
-        static char time_str[6];
-        time_str[0] = (simulated_time_h_ / 10) + '0';
-        time_str[1] = (simulated_time_h_ % 10) + '0';
-        time_str[2] = ':';
-        time_str[3] = (simulated_time_m_ / 10) + '0';
-        time_str[4] = (simulated_time_m_ % 10) + '0';
-        time_str[5] = '\0';
-        if (time_text_) {
-            time_text_->set_text(time_str);
+        if (watch_face_screen_) {
+            watch_face_screen_->set_time(simulated_time_h_, simulated_time_m_);
         }
     }
 
@@ -118,31 +68,10 @@ void WatchApp::on_background_tick(uint32_t delta_ticks) {
         current_bpm = data.payload.bpm;
     }
 
-    // 更新 UI 组件数据
-    static char hr_buf[16];
-    static char stp_buf[16];
-    static uint32_t last_bpm = 0xFFFFFFFF;
-    static uint32_t last_steps = 0xFFFFFFFF;
-
-    if (current_bpm != last_bpm && hr_text_) {
-        hr_buf[0] = 'H'; hr_buf[1] = 'R'; hr_buf[2] = ':'; hr_buf[3] = ' ';
-        hr_buf[4] = (current_bpm / 100) + '0';
-        hr_buf[5] = ((current_bpm / 10) % 10) + '0';
-        hr_buf[6] = (current_bpm % 10) + '0';
-        hr_buf[7] = '\0';
-        hr_text_->set_text(hr_buf);
-        last_bpm = current_bpm;
-    }
-
-    if (current_steps != last_steps && steps_text_) {
-        stp_buf[0] = 'S'; stp_buf[1] = 'T'; stp_buf[2] = 'P'; stp_buf[3] = ':'; stp_buf[4] = ' ';
-        stp_buf[5] = (current_steps / 1000) + '0';
-        stp_buf[6] = ((current_steps / 100) % 10) + '0';
-        stp_buf[7] = ((current_steps / 10) % 10) + '0';
-        stp_buf[8] = (current_steps % 10) + '0';
-        stp_buf[9] = '\0';
-        steps_text_->set_text(stp_buf);
-        last_steps = current_steps;
+    // 这里其实不应该在 WatchApp 里轮询更新 UI，而是 WatchFaceScreen 自己通过 on_show 或者 on_tick 获取。
+    // 为了兼容原有逻辑，我们将数据直接传给表盘
+    if (watch_face_screen_) {
+        watch_face_screen_->set_health_data(current_bpm, current_steps);
     }
 
     // 蓝牙 GATT Server 数据同步

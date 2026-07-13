@@ -11,49 +11,29 @@
 #include "font_engine.hpp" // 位图字体引擎
 
 #include "../../ui/ui_manager.hpp"
-#include "../../ui/widgets/text_view.hpp"
-#include "../../ui/widgets/button.hpp"
-#include "../../ui/widgets/arc_progress.hpp"
-
-// ========================================================
-// 手环 UI 页面路由枚举
-// ========================================================
-enum class WatchPage : uint8_t {
-    WATCH_FACE,     // 主表盘 (显示时间、步数、电量)
-    HEART_RATE,     // 实时心率测量页
-    ACTIVITY,       // 运动数据汇总页
-    QUICK_PANEL     // 下拉快捷控制中心
-};
+#include "../../ui/ui_manager.hpp"
+#include "../../ui/screen_navigator.hpp"
+#include "screens/watch_face_screen.hpp"
 
 class WatchApp {
 private:
-    WatchPage current_page_;
     uint32_t  simulated_time_h_;
     uint32_t  simulated_time_m_;
 
     // UI Framework 组件
     FrameBuffer<DISPLAY_WIDTH, DISPLAY_HEIGHT>* fb_;
     UI::UIRenderer* renderer_;
-    UI::ViewGroup* watch_face_view_;
-    UI::TextView* time_text_;
-    UI::TextView* hr_text_;
-    UI::TextView* steps_text_;
+    WatchFaceScreen* watch_face_screen_;
 
-    WatchApp() : current_page_(WatchPage::WATCH_FACE), simulated_time_h_(10), simulated_time_m_(9),
-                 fb_(nullptr), renderer_(nullptr), watch_face_view_(nullptr) {}
+    WatchApp() : simulated_time_h_(10), simulated_time_m_(9),
+                 fb_(nullptr), renderer_(nullptr), watch_face_screen_(nullptr) {}
 
     // ========================================================
     // 私有 UI 渲染模块 (依赖硬件 ST7789 与位图引擎)
     // ========================================================
-    void render_watch_face();
-
-    void render_heart_rate_page() {
-        // 渲染心率专用测量动画与历史折线图
-    }
-
-    void render_quick_panel() {
-        // 渲染勿扰模式、亮度调节、BLE 开关等控制图标
-    }
+    // ========================================================
+    // 私有 UI 渲染模块 (依赖硬件 ST7789 与位图引擎)
+    // ========================================================
 
 public:
     static WatchApp& instance() {
@@ -79,15 +59,13 @@ public:
         UI::UiManager::instance().set_renderer(renderer_);
 
         // 4. 构建 Watch Face 页面 Widget Tree
-        build_watch_face_ui();
-        UI::UiManager::instance().set_root_view(watch_face_view_);
+        watch_face_screen_ = new WatchFaceScreen();
+        UI::ScreenNavigator::instance().push(watch_face_screen_);
+        UI::UiManager::instance().set_root_view(&UI::ScreenNavigator::instance());
         
         // 5. 强制系统进入亮屏活跃状态
         PowerManager::instance().transition_to(PowerState::ACTIVE);
     }
-    
-    // 构建表盘 UI 树
-    void build_watch_face_ui();
 
     // ========================================================
     // 手势路由引擎：处理用户的滑动与点击输入

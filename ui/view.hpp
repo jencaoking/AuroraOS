@@ -21,6 +21,9 @@ protected:
     bool is_dirty_;
     ViewGroup* parent_;
 
+    void (*on_click_)(View*, void*) = nullptr;
+    void* on_click_ctx_ = nullptr;
+
 public:
     View(int16_t x, int16_t y, uint16_t w, uint16_t h) 
         : x_(x), y_(y), width_(w), height_(h), is_dirty_(true), parent_(nullptr) {}
@@ -34,8 +37,19 @@ public:
     // 渲染方法：必须由子类实现
     virtual void draw(UIRenderer& renderer) = 0;
 
+    void set_on_click_listener(void (*cb)(View*, void*), void* ctx) {
+        on_click_ = cb;
+        on_click_ctx_ = ctx;
+    }
+
     // 事件处理：如果子类处理了事件，返回 true；否则返回 false 继续向上传递
     virtual bool handle_gesture(const GestureEvent& event) {
+        if (event.type == GestureType::TAP && contains(event.x, event.y)) {
+            if (on_click_) {
+                on_click_(this, on_click_ctx_);
+                return true;
+            }
+        }
         return false;
     }
 

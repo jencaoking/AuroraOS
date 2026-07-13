@@ -7,7 +7,7 @@
 //   - ASSERT_* 用于前置条件，EXPECT_* 用于多项校验
 
 #include <gtest/gtest.h>
-#include "drivers/sensor/health_algo.hpp"
+#include "../../drivers/sensor/health_algo.hpp"
 
 using namespace aurora::health;
 

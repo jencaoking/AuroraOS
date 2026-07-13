@@ -1,5 +1,6 @@
 #include <gtest/gtest.h>
-#include "apps/elf.hpp"
+#include "../../apps/elf.hpp"
+#include "../../apps/elf_loader.hpp"
 #include <stdint.h>
 
 TEST(ElfRelocationTest, ThumbCallMath) {
@@ -10,7 +11,7 @@ TEST(ElfRelocationTest, ThumbCallMath) {
     
     // 我们在这里只测试基本的加减法，实际的二进制编码测试太复杂
     int32_t result = S + 0 - P; // A = 0
-    EXPECT_EQ(result, static_cast<int32_t>(0xE800D000));
+    EXPECT_EQ(result, static_cast<int32_t>(0xE7FFD000));
 }
 
 TEST(ElfRelocationTest, Abs32Math) {

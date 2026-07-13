@@ -1,5 +1,8 @@
 #include "symbol_export.hpp"
 #include "posix.hpp"
+#include "../apps/lua_ui_binding.hpp"
+#include "../ui/screen_navigator.hpp"
+#include "../ui/ui_manager.hpp"
 
 // Forward declare sys_print wrapper or we can just use the syscall inline version inside the ELF directly.
 // To provide sys_print as a callable symbol, we create a non-inline wrapper.
@@ -16,6 +19,10 @@ extern "C" void sys_print_wrapper(const char* str) {
     );
 }
 
+extern "C" void navigator_push_wrapper(UI::Screen* screen) {
+    UI::ScreenNavigator::instance().push(screen);
+}
+
 const KernelSymbol kernel_symtab[] = {
     {"sys_print", reinterpret_cast<uintptr_t>(&sys_print_wrapper)},
     {"open", reinterpret_cast<uintptr_t>(&open)},
@@ -30,6 +37,17 @@ const KernelSymbol kernel_symtab[] = {
     {"sem_wait", reinterpret_cast<uintptr_t>(&sem_wait)},
     {"sem_post", reinterpret_cast<uintptr_t>(&sem_post)},
     {"sem_destroy", reinterpret_cast<uintptr_t>(&sem_destroy)},
+    
+    // Lua Engine
+    {"luaL_newstate", reinterpret_cast<uintptr_t>(&luaL_newstate)},
+    {"luaL_openlibs", reinterpret_cast<uintptr_t>(&luaL_openlibs)},
+    {"lua_close", reinterpret_cast<uintptr_t>(&lua_close)},
+    {"luaL_loadstring", reinterpret_cast<uintptr_t>(&luaL_loadstring)},
+    {"lua_pcallk", reinterpret_cast<uintptr_t>(&lua_pcallk)}, // lua_pcall is a macro for lua_pcallk
+    {"luaopen_aurora_ui", reinterpret_cast<uintptr_t>(&luaopen_aurora_ui)},
+    
+    // UI Engine 
+    {"navigator_push", reinterpret_cast<uintptr_t>(&navigator_push_wrapper)},
 };
 
 const int kernel_symtab_size = sizeof(kernel_symtab) / sizeof(kernel_symtab[0]);

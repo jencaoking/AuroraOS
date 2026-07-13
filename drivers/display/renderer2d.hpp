@@ -48,6 +48,15 @@ public:
     Renderer2D(const Renderer2D&) = delete;
     Renderer2D& operator=(const Renderer2D&) = delete;
 
+    // 坐标视口偏移（用于全局平滑转场动画）
+    void set_offset(int16_t dx, int16_t dy) noexcept {
+        offset_x_ = dx;
+        offset_y_ = dy;
+    }
+    [[nodiscard]] int16_t get_offset_x() const noexcept { return offset_x_; }
+    [[nodiscard]] int16_t get_offset_y() const noexcept { return offset_y_; }
+
+
     // =========================================================================
     // 1. 基础原语：直线（Bresenham 算法，整数运算）
     //    借鉴自经典 Breshenham's Line Drawing Algorithm
@@ -99,6 +108,9 @@ public:
 
     void fill_rect(int16_t x, int16_t y, uint16_t w, uint16_t h,
                    ColorRGB565 color) noexcept {
+        x += offset_x_;
+        y += offset_y_;
+        
         // 委托给 FrameBuffer 的原生填充（已做越界裁剪）
         if (x >= 0 && y >= 0) {
             fb_.fill_rect(static_cast<uint16_t>(x), static_cast<uint16_t>(y),
@@ -307,14 +319,16 @@ public:
     // F.6: noexcept — 纯整数运算，无异常路径
     void blend_pixel(int16_t x, int16_t y, ColorRGB565 src_color,
                      uint8_t alpha) noexcept {
+        x += offset_x_;
+        y += offset_y_;
         if (!in_bounds(x, y)) return;
         if (alpha == 255u) { plot(x, y, src_color); return; }
         if (alpha == 0u)   return;
 
-        // 从帧缓冲读出目标像素（需要 get_pixel 扩展）
+        // 从帧缓冲读出目标像素（使用已经应用 offset 的坐标）
         const ColorRGB565 dst = fb_pixel(static_cast<uint16_t>(x),
                                          static_cast<uint16_t>(y));
-        plot(x, y, blend_rgb565(dst, src_color, alpha));
+        plot_raw(x, y, blend_rgb565(dst, src_color, alpha));
     }
 
     // =========================================================================
@@ -326,6 +340,8 @@ public:
 
 private:
     FrameBuffer<Width, Height>& fb_;  // 非拥有引用
+    int16_t offset_x_{0};
+    int16_t offset_y_{0};
 
     // ── 内部工具函数 ──────────────────────────────────────────────────────────
 
@@ -338,6 +354,13 @@ private:
 
     // 安全打点（越界自动丢弃，不调用 FrameBuffer::set_pixel 的越界检查）
     void plot(int16_t x, int16_t y, ColorRGB565 color) noexcept {
+        x += offset_x_;
+        y += offset_y_;
+        plot_raw(x, y, color);
+    }
+
+    // 内部底层无偏液体打点
+    void plot_raw(int16_t x, int16_t y, ColorRGB565 color) noexcept {
         if (in_bounds(x, y)) {
             fb_.set_pixel(static_cast<uint16_t>(x),
                           static_cast<uint16_t>(y), color);

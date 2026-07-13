@@ -11,6 +11,17 @@ struct ViewUserData {
     View* view;
 };
 
+struct LuaCallbackCtx {
+    lua_State* L;
+    int ref;
+};
+
+static void lua_view_on_click(View* v, void* ctx) {
+    LuaCallbackCtx* c = static_cast<LuaCallbackCtx*>(ctx);
+    lua_rawgeti(c->L, LUA_REGISTRYINDEX, c->ref);
+    lua_pcall(c->L, 0, 0, 0);
+}
+
 static View* check_view(lua_State* L, int index) {
     void* ud = luaL_checkudata(L, index, "aurora.ui.View");
     luaL_argcheck(L, ud != nullptr, index, "`View` expected");
@@ -97,11 +108,57 @@ static int set_root_view(lua_State* L) {
     return 0;
 }
 
+static int view_set_on_click_listener(lua_State* L) {
+    View* v = check_view(L, 1);
+    if (!lua_isfunction(L, 2)) {
+        return luaL_error(L, "Expected function");
+    }
+    lua_pushvalue(L, 2);
+    int ref = luaL_ref(L, LUA_REGISTRYINDEX);
+    
+    LuaCallbackCtx* ctx = new LuaCallbackCtx{L, ref};
+    v->set_on_click_listener(lua_view_on_click, ctx);
+    return 0;
+}
+
+// --------------------------------------------------------
+// ScreenNavigator Bindings
+// --------------------------------------------------------
+#include "../ui/screen.hpp"
+#include "../ui/screen_navigator.hpp"
+
+// We create a LuaScreen to wrap lua lifecycle callbacks if needed, or simply allow pushing ViewGroups.
+// Wait, ScreenNavigator takes a Screen. We need a Screen wrapper.
+class LuaScreen : public Screen {
+    ViewGroup* root_;
+public:
+    LuaScreen(ViewGroup* root) : root_(root) {
+        // We make the LuaScreen's view group the root_
+        // Screen is a ViewGroup itself, so we can just add the root_ as a child.
+        add_child(root_);
+    }
+};
+
+static int navigator_push(lua_State* L) {
+    View* v = check_view(L, 1);
+    ViewGroup* vg = static_cast<ViewGroup*>(v);
+    LuaScreen* screen = new LuaScreen(vg);
+    ScreenNavigator::instance().push(screen);
+    return 0;
+}
+
+static int navigator_pop(lua_State* L) {
+    ScreenNavigator::instance().pop();
+    return 0;
+}
+
 static const struct luaL_Reg ui_funcs[] = {
     {"TextView", text_view_new},
     {"ViewGroup", view_group_new},
     {"ArcProgress", arc_progress_new},
     {"set_root_view", set_root_view},
+    {"navigator_push", navigator_push},
+    {"navigator_pop", navigator_pop},
     {NULL, NULL}
 };
 
@@ -109,6 +166,7 @@ static const struct luaL_Reg view_methods[] = {
     {"add_child", view_add_child},
     {"set_text", text_view_set_text},
     {"set_percentage", arc_progress_set_percentage},
+    {"set_on_click_listener", view_set_on_click_listener},
     {NULL, NULL}
 };
 

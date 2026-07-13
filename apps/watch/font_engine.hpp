@@ -19,7 +19,7 @@ enum class FontColor : uint16_t {
 enum class FontSize : uint8_t {
     SMALL,  // 约 8px 高度 (scale 1)
     MEDIUM, // 约 16px 高度 (scale 2)
-    HUGE    // 约 28px 高度 (scale 4)
+    EXTRA_LARGE    // 约 28px 高度 (scale 4)
 };
 
 // ========================================================
@@ -157,7 +157,7 @@ public:
         uint16_t char_idx = c - ' ';
         const uint8_t* char_data = &font5x7_data[char_idx * 5];
 
-        int scale = (size == FontSize::HUGE) ? 4 : ((size == FontSize::MEDIUM) ? 2 : 1);
+        int scale = (size == FontSize::EXTRA_LARGE) ? 4 : ((size == FontSize::MEDIUM) ? 2 : 1);
         
         for (int col = 0; col < 5; col++) {
             uint8_t col_data = char_data[col];

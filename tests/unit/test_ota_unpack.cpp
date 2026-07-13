@@ -1,7 +1,7 @@
 #include <gtest/gtest.h>
-#include "kernel/ota.hpp"
-#include "kernel/firmware_header.hpp"
-#include "config/partition_table.hpp"
+#include "../../kernel/ota.hpp"
+#include "../../kernel/firmware_header.hpp"
+#include "../../config/partition_table.hpp"
 
 // Due to heavy hardware coupling (Flash I/O, VFS), full unpacking 
 // tests require extensive mocking of the flash_internal namespace.
