@@ -108,12 +108,13 @@ auroraOS 坚信"好的架构来自借鉴与融合"。系统不是从零发明一
 - **OLED 驱动**：SPI 接口，窗口化局部更新，DMA 推送
 - **ST7789 驱动**（miband 分支）：真实 AMOLED 硬件驱动，192×490 分辨率
 - **输入事件子系统**：统一 InputEvent 抽象，触摸/按键/手势统一处理
+- **页面栈导航器与 GUI 动画引擎**：支持 `ScreenNavigator` 栈式导航（Push/Pop/Replace），右滑手势 Pop，页面生命周期路由，支持平移与渐变转场动画
 - **表盘 Complication 引擎**：借鉴 watchOS，数据驱动 UI，传感器数据变化才触发重绘
 
 ### 📦 应用与脚本
 
-- **ELF 动态加载器**：从 VFS 加载 ARM Thumb ELF 可执行文件，解析 PT_LOAD 段创建任务
-- **Lua 5.4.6 小程序引擎**：嵌入 Lua VM，C++ API 绑定（传感器/绘图/系统调用），支持脚本开发手表应用
+- **ELF 动态加载器与重定位解析**：从 VFS 加载 ARM Thumb ELF 可执行文件，支持 `R_ARM_ABS32` 与 `R_ARM_THM_CALL` 复杂的重定位解析与内核 Symbol 导出表（如 sys_print, UI 导航, Lua 引擎等）的动态绑定
+- **Lua 小程序引擎与 UI 深度绑定**：嵌入 Lua VM，可完全在 Lua 中定义复杂交互 UI，支持设置 `set_on_click_listener` 触控回调、直接调用页面导航器（`navigator_push`/`navigator_pop`），支持脚本开发手表应用
 - **应用生命周期**：借鉴 watchOS，FOREGROUND/BACKGROUND/SUSPENDED 状态机，动态优先级调整
 - **意图引擎**：借鉴 BlueOS，基于传感器数据的规则决策，自动提升应用优先级
 
@@ -642,12 +643,14 @@ python scripts/genconfig.py
 - [x] 应用框架 + 生命周期（AppControlBlock）
 - [x] 小程序框架（MiniProgramEngine + Lua 5.4.6）
 - [x] 分布式软总线（DistributedSoftBus）
-- [ ] 运动健康算法框架
-- [ ] 通知系统
+- [x] 运动健康算法框架 (PPG心率数字滤波、基于三轴加速度计步算法与低功耗睡眠监测)
+- [x] 通知系统与消息队列 Hub (统一数据抽象、优先级队列与 OLED 全屏/悬浮通知弹窗)
 - [ ] NFC
 - [ ] 表盘商店
-- [ ] OTA 无线升级
-- [ ] 安全启动
+- [x] OTA 无线升级与 A/B 镜像切换 (Flash分区表、BLE固件传输与断电安全回滚)
+- [x] 安全启动 (Secure Boot，上电 Ed25519 签名验证 Root of Trust)
+- [x] 页面栈导航器与 GUI 动画引擎 (ScreenNavigator 栈式导航、右滑手势 Pop、过渡平移/渐变动画)
+- [x] ELF 重定位解析与 Lua UI 深度绑定 (R_ARM_ABS32 / R_ARM_THM_CALL 动态解析与 Lua 触控/路由绑定)
 
 ### Phase 4: 手机探索（18-36 个月）— 🌌 规划中
 
