@@ -2,6 +2,7 @@
 #define AURORA_DRIVERS_NFC_CONTROLLER_HPP
 
 #include <stdint.h>
+#include <mutex>
 
 namespace aurora {
 namespace nfc {
@@ -45,6 +46,7 @@ public:
 
 class NfcController {
 private:
+    std::mutex mutex_;
     bool initialized_;
     CardEmulationState ce_state_;
     ApduHandler* handler_;
@@ -61,12 +63,14 @@ public:
     }
 
     bool init() {
+        std::lock_guard<std::mutex> lock(mutex_);
         initialized_ = true;
         ce_state_ = CardEmulationState::DEACTIVATED;
         return true;
     }
 
     void register_apdu_handler(ApduHandler* handler) {
+        std::lock_guard<std::mutex> lock(mutex_);
         handler_ = handler;
     }
 
@@ -74,6 +78,7 @@ public:
     
     // Simulate an external reader entering the RF field
     void simulate_field_on(NfcTagType type) {
+        std::lock_guard<std::mutex> lock(mutex_);
         if (!initialized_) return;
         detected_field_ = type;
         ce_state_ = CardEmulationState::ACTIVATED;
@@ -81,12 +86,14 @@ public:
 
     // Simulate an external reader leaving the RF field
     void simulate_field_off() {
+        std::lock_guard<std::mutex> lock(mutex_);
         detected_field_ = NfcTagType::NONE;
         ce_state_ = CardEmulationState::DEACTIVATED;
     }
 
     // Simulate an incoming APDU from the reader
     bool simulate_incoming_apdu(const uint8_t* payload, uint32_t length, ApduResponse& response) {
+        std::lock_guard<std::mutex> lock(mutex_);
         if (ce_state_ == CardEmulationState::DEACTIVATED || !handler_ || length > MAX_APDU_SIZE) {
             return false;
         }

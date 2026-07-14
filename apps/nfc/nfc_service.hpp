@@ -42,6 +42,7 @@ private:
 
     // Helper for safe string copy (Bug 6)
     static void safe_copy(char* dst, size_t dst_cap, const char* src) {
+        if (dst_cap == 0) return;
         size_t i = 0;
         while (i < dst_cap - 1 && src[i] != '\0') {
             dst[i] = src[i];
@@ -114,7 +115,8 @@ public:
         }
 
         // Action APDU (e.g., DEBIT/UNLOCK) - CLA=0x80, INS=0x50, P1=0x00, P2=0x00, Lc=0x04, Data=4 bytes TxID
-        if (req.length >= 9 && req.data[0] == 0x80 && req.data[1] == 0x50) {
+        if (req.length >= 9 && req.data[0] == 0x80 && req.data[1] == 0x50 &&
+            req.data[2] == 0x00 && req.data[3] == 0x00 && req.data[4] == 0x04) {
             if (!selected_card_) {
                 resp.length = 2;
                 resp.data[0] = 0x69;
