@@ -3,6 +3,7 @@
 #include "vfs.hpp"
 #include "timer.hpp" // 引入软件定时器
 #include "../net/distributed_bus.hpp" // 引入软总线
+#include "../net/wifi_driver.hpp"     // 引入 WiFi 驱动
 
 // 引入 lwIP 核心头文件
 #include "lwip/netif.h"
@@ -113,6 +114,81 @@ void NetApp::run_dhcp_client() {
         }
 
         // 释放 CPU，每秒检查一次
+        sleep(1000); 
+    }
+}
+
+// ========================================================
+// 无线网络主轮询任务：由调度器在后台运行
+// ========================================================
+void NetApp::init_wifi_and_dhcp(const char* ssid, const char* password) {
+    int console_fd = open("/dev/uart0", 0);
+    write(console_fd, "[Network] Starting WiFi Connection Sequence...\r\n", 48);
+
+    // 1. 初始化并连接 WiFi
+    static auroraos::net::EspWifiDriver wifi_driver;
+    if (!wifi_driver.init()) {
+        write(console_fd, "[Network] WiFi Hardware Init Failed!\r\n", 38);
+        close(console_fd);
+        return;
+    }
+
+    if (!wifi_driver.connect(ssid, password)) {
+        write(console_fd, "[Network] WiFi Connection Failed!\r\n", 35);
+        close(console_fd);
+        return;
+    }
+
+    // 2. 将驱动实例绑定给 lwIP 的 netif state
+    g_netif.state = &wifi_driver;
+
+    write(console_fd, "[Network] WiFi Link UP. Starting lwIP TCP/IP Stack...\r\n", 55);
+    close(console_fd);
+
+    // 3. 启动 lwIP 内部守护进程并注册完成回调（共用 tcpip_init_done_cb 处理后续 DHCP 和网卡添加）
+    tcpip_init(tcpip_init_done_cb, nullptr);
+
+    bool ip_assigned = false;
+    static bool network_services_started = false;
+    console_fd = open("/dev/uart0", 0);
+
+    // 轮询等待 DHCP 服务器分配 IP (与有线逻辑相同)
+    while (true) {
+        if (dhcp_supplied_address(&g_netif)) {
+            if (!ip_assigned) {
+                char msg[128];
+                int len = 0;
+                auto append = [&](const char* s) { 
+                    while (*s && len < (int)sizeof(msg) - 1) msg[len++] = *s++; 
+                };
+                auto append_num = [&](uint8_t n) {
+                    char tmp[4]; int i = 0;
+                    if (n == 0) tmp[i++] = '0';
+                    while (n > 0) { tmp[i++] = (n % 10) + '0'; n /= 10; }
+                    while (i > 0 && len < (int)sizeof(msg) - 1) msg[len++] = tmp[--i];
+                };
+
+                append("\r\n\r\n🌐 [WiFi DHCP] Success! auroraOS got IP Address: ");
+                append_num(ip4_addr1(netif_ip4_addr(&g_netif))); append(".");
+                append_num(ip4_addr2(netif_ip4_addr(&g_netif))); append(".");
+                append_num(ip4_addr3(netif_ip4_addr(&g_netif))); append(".");
+                append_num(ip4_addr4(netif_ip4_addr(&g_netif))); append("\r\n\r\n");
+
+                msg[len] = '\0';
+                write(console_fd, msg, len);
+                
+                if (!network_services_started) {
+                    DistributedSoftBus::instance().init();
+                    uint32_t* bus_stack = new uint32_t[1024];
+                    Scheduler::instance().create_task(softbus_listener_entry, bus_stack, 1024 * sizeof(uint32_t), TaskPriority::High);
+                    TimerManager::instance().start_timer(3000, TimerType::Periodic, beacon_timer_callback);
+                    network_services_started = true;
+                }
+                ip_assigned = true;
+            }
+        } else {
+            ip_assigned = false;
+        }
         sleep(1000); 
     }
 }

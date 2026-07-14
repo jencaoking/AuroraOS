@@ -33,7 +33,7 @@ extern Mutex uart_mutex;
 
 // 包装一下入口函数以符合 create_task 的签名
 void network_task_entry(void) {
-    NetApp::run_dhcp_client();
+    NetApp::init_wifi_and_dhcp("auroraOS_IoT", "88888888");
 }
 
 extern "C" {

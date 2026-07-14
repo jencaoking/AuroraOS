@@ -659,7 +659,7 @@ python scripts/genconfig.py
 - [x] 进程隔离 + 虚拟内存地址空间映射 (VASP)
 - [ ] 基于 seL4 的 Capability 安全模型与权限管理
 - [ ] 消息传递 IPC（QNX 风格同步 MsgSend/Receive/Reply）
-- [ ] WiFi 驱动 + 完整 TCP/IP
+- [x] WiFi 驱动 + 完整 TCP/IP
 - [ ] GPU 驱动 + GUIX 图形框架
 - [ ] 摄像头 + 多媒体
 - [ ] 应用沙盒
