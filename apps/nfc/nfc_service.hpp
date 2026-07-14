@@ -80,6 +80,11 @@ public:
         // Bug 3: Add mutex lock to protect shared state
         std::lock_guard<std::mutex> lock(mutex_);
 
+        // 收到任何 SELECT APDU 都必须先清除之前的卡片上下文，防止状态残留 (Medium Bug 2)
+        if (req.length >= 4 && req.data[0] == 0x00 && req.data[1] == 0xA4) {
+            selected_card_ = nullptr;
+        }
+
         // Simple routing based on SELECT APDU
         if (is_select_apdu(req, transit_card_)) {
             // Bug 7: Correct inactive card response
@@ -117,10 +122,13 @@ public:
                 return true;
             }
 
-            uint32_t tx_id = (req.data[5] << 24) | (req.data[6] << 16) | (req.data[7] << 8) | req.data[8];
+            // Medium Bug 3: 显式强转避免有符号整数左移溢出未定义行为
+            uint32_t tx_id = ((uint32_t)req.data[5] << 24) | ((uint32_t)req.data[6] << 16) | 
+                             ((uint32_t)req.data[7] << 8)  | (uint32_t)req.data[8];
             
-            // Bug 4: Replay protection
-            if (tx_id <= selected_card_->last_tx_id) {
+            // Medium Bug 1: 交易序列耗尽问题，使用差值允许 tx_id 回绕
+            int32_t tx_diff = (int32_t)(tx_id - selected_card_->last_tx_id);
+            if (tx_diff <= 0) {
                 resp.length = 2;
                 resp.data[0] = 0x69;
                 resp.data[1] = 0x85; // Conditions not satisfied (replay detected)
