@@ -40,8 +40,8 @@ void SoftGpuDevice::do_fill_rect(const GpuCommand& cmd) {
     uint32_t h = cmd.height;
     
     if (x >= dst_w || y >= dst_h) return;
-    if (x + w > dst_w) w = dst_w - x;
-    if (y + h > dst_h) h = dst_h - y;
+    if (w > dst_w - x) w = dst_w - x;
+    if (h > dst_h - y) h = dst_h - y;
     
     uint16_t color = cmd.args.fill.color;
     
@@ -75,10 +75,10 @@ void SoftGpuDevice::do_blit(const GpuCommand& cmd) {
     if (dst_x >= dst_w || dst_y >= dst_h) return;
     if (src_x >= src_w || src_y >= src_h) return;
     
-    if (dst_x + w > dst_w) w = dst_w - dst_x;
-    if (dst_y + h > dst_h) h = dst_h - dst_y;
-    if (src_x + w > src_w) w = src_w - src_x;
-    if (src_y + h > src_h) h = src_h - src_y;
+    if (w > dst_w - dst_x) w = dst_w - dst_x;
+    if (h > dst_h - dst_y) h = dst_h - dst_y;
+    if (w > src_w - src_x) w = src_w - src_x;
+    if (h > src_h - src_y) h = src_h - src_y;
     
     for (uint32_t row = 0; row < h; ++row) {
         uint32_t dst_idx = (dst_y + row) * dst_w + dst_x;
@@ -113,10 +113,10 @@ void SoftGpuDevice::do_blend(const GpuCommand& cmd) {
     if (dst_x >= dst_w || dst_y >= dst_h) return;
     if (src_x >= src_w || src_y >= src_h) return;
     
-    if (dst_x + w > dst_w) w = dst_w - dst_x;
-    if (dst_y + h > dst_h) h = dst_h - dst_y;
-    if (src_x + w > src_w) w = src_w - src_x;
-    if (src_y + h > src_h) h = src_h - src_y;
+    if (w > dst_w - dst_x) w = dst_w - dst_x;
+    if (h > dst_h - dst_y) h = dst_h - dst_y;
+    if (w > src_w - src_x) w = src_w - src_x;
+    if (h > src_h - src_y) h = src_h - src_y;
     
     for (uint32_t row = 0; row < h; ++row) {
         uint32_t dst_idx = (dst_y + row) * dst_w + dst_x;
