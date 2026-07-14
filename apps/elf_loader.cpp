@@ -5,6 +5,8 @@
 #include "task.hpp"
 #include "syscall.hpp"
 #include "../kernel/symbol_export.hpp"
+#include "../kernel/page_allocator.hpp"
+#include "../arch/arm/cortex-a/mmu/mmu_manager.hpp"
 
 // We use sys_print since ElfLoader runs in the context of the user task that called it (shell_task).
 // The original prompt used safe_print, but we have migrated to sys_print for isolation.
@@ -256,14 +258,60 @@ bool ElfLoader::load_and_exec(const char* filepath) {
 
     sys_print("[ElfLoader] Spawning Dynamic Task from RAM...\r\n");
 
+#ifdef ARCH_AARCH64
+    auroraos::kernel::mmu::AArch64MmuManager* vasp = new auroraos::kernel::mmu::AArch64MmuManager();
+    
+    // Load and Map text/data segment pages
+    for (uint32_t offset = 0; offset < total_memsz; offset += auroraos::kernel::PageAllocator::PAGE_SIZE) {
+        void* phys_page = auroraos::kernel::PageAllocator::instance().alloc_page();
+        if (!phys_page) {
+            sys_print("[ElfLoader] Error: Out of physical pages!\r\n");
+            delete[] segment_memory;
+            delete vasp;
+            VfsManager::instance().close(fd);
+            return false;
+        }
+        
+        uint32_t copy_sz = (total_memsz - offset < auroraos::kernel::PageAllocator::PAGE_SIZE) ? (total_memsz - offset) : auroraos::kernel::PageAllocator::PAGE_SIZE;
+        char* dest = reinterpret_cast<char*>(phys_page);
+        char* src = segment_memory + offset;
+        for(uint32_t b = 0; b < copy_sz; ++b) {
+            dest[b] = src[b];
+        }
+        
+        vasp->map(min_vaddr + offset, reinterpret_cast<uintptr_t>(phys_page), auroraos::kernel::MapFlags::User | auroraos::kernel::MapFlags::Read | auroraos::kernel::MapFlags::Write | auroraos::kernel::MapFlags::Execute);
+    }
+    
+    // Map stack page
+    uint32_t* app_stack = reinterpret_cast<uint32_t*>(auroraos::kernel::PageAllocator::instance().alloc_page());
+    uint32_t stack_size = auroraos::kernel::PageAllocator::PAGE_SIZE;
+    
+    // Map stack 1:1 (virtual == physical) to avoid SP address translation issues in create_task
+    vasp->map(reinterpret_cast<uintptr_t>(app_stack), reinterpret_cast<uintptr_t>(app_stack), auroraos::kernel::MapFlags::User | auroraos::kernel::MapFlags::Read | auroraos::kernel::MapFlags::Write);
+    
+    delete[] segment_memory;
+#else
     uint32_t* app_stack = new uint32_t[512];
-    if (!Scheduler::instance().create_task(app_entry, app_stack, 512 * sizeof(uint32_t), TaskPriority::Low)) {
+    uint32_t stack_size = 512 * sizeof(uint32_t);
+#endif
+
+    TaskControlBlock* tcb = Scheduler::instance().create_task(app_entry, app_stack, stack_size, TaskPriority::Low);
+    if (!tcb) {
         sys_print("[ElfLoader] Error: task table full, cannot spawn loaded program!\r\n");
+#ifdef ARCH_AARCH64
+        auroraos::kernel::PageAllocator::instance().free_page(app_stack);
+        delete vasp;
+#else
         delete[] app_stack;
         delete[] segment_memory;
+#endif
         VfsManager::instance().close(fd);
         return false;
     }
+
+#ifdef ARCH_AARCH64
+    tcb->pgdir_base = vasp->get_pgdir_base();
+#endif
 
     VfsManager::instance().close(fd);
     return true;
