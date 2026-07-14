@@ -107,15 +107,30 @@ extern "C" {
         switch (svc_number) {
             case SYS_PRINT: { // SysCall: 串口输出（在内核特权态安全调用）
                 // 【参数校验】：r0 指针必须属于该任务的栈或 Flash 只读段
-                // 字符串最长限制 256 字节（防止无界读）
                 constexpr size_t MAX_PRINT_LEN = 256u;
                 const char* str = reinterpret_cast<const char*>(frame->r0);
-                if (!SyscallValidator::validate_user_ptr(
-                        str, MAX_PRINT_LEN, stack_base, stack_size)) {
-                    uart_puts("[Kernel] SYS_PRINT: invalid ptr rejected\n");
+                
+                // 为了防止没有 \0 导致的越界读取，我们先验证最多 MAX_PRINT_LEN 字节是否在合法空间
+                // 然后在安全范围内寻找 \0
+                size_t actual_len = 0;
+                bool safe = false;
+                for (size_t i = 0; i < MAX_PRINT_LEN; i++) {
+                    if (SyscallValidator::validate_user_ptr(str + i, 1, stack_base, stack_size)) {
+                        if (str[i] == '\0') {
+                            actual_len = i;
+                            safe = true;
+                            break;
+                        }
+                    } else {
+                        break; // 越界
+                    }
+                }
+                
+                if (!safe) {
+                    uart_puts("[Kernel] SYS_PRINT: invalid ptr or no null terminator rejected\n");
                     break;
                 }
-                uart_puts(str);
+                uart_puts(str); // 此时字符串已知安全且有 \0
                 break;
             }
             case SYS_YIELD: // SysCall: 任务 Yield
@@ -137,16 +152,30 @@ extern "C" {
                 uint32_t cap_id = frame->r0;
                 void* msg = reinterpret_cast<void*>(frame->r1);
                 uint32_t len = frame->r2;
-                void* reply_buf = reinterpret_cast<void*>(frame->r3);
-                // Note: In inline asm we pushed 5th arg to stack (or r4), for simplicity here we assume 5th arg is in r12 or stack, but since we didn't push properly in SVC frame, let's hardcode max_reply_len for safety in phase 1 or fetch from r4 if we saved it. 
-                // Cortex-M exception frame doesn't push r4. Let's assume max_reply_len is 256.
-                uint32_t max_reply_len = 256; 
+                
+                // 从 r3 解析 IpcReplyDesc
+                const IpcReplyDesc* desc = reinterpret_cast<const IpcReplyDesc*>(frame->r3);
+                if (!SyscallValidator::validate_user_ptr(desc, sizeof(IpcReplyDesc), stack_base, stack_size)) {
+                    uart_puts("[Kernel] SYS_IPC_CALL: invalid desc ptr\n");
+                    break;
+                }
+                void* reply_buf = desc->buf;
+                uint32_t max_reply_len = desc->max_len;
+                
+                // 校验 msg 和 reply_buf
+                if (len > 0 && !SyscallValidator::validate_user_ptr(msg, len, stack_base, stack_size)) {
+                    uart_puts("[Kernel] SYS_IPC_CALL: invalid msg ptr\n");
+                    break;
+                }
+                if (max_reply_len > 0 && !SyscallValidator::validate_user_ptr(reply_buf, max_reply_len, stack_base, stack_size)) {
+                    uart_puts("[Kernel] SYS_IPC_CALL: invalid reply_buf ptr\n");
+                    break;
+                }
                 
                 if (cap_id < auroraos::kernel::MAX_CSPACE_SLOTS) {
                     const auto& cap = cur->cspace[cap_id];
                     if (cap.type == auroraos::kernel::CapType::Endpoint && cap.rights.write) {
                         auto* ep = static_cast<auroraos::kernel::Endpoint*>(cap.object);
-                        // We must cast away const to call Endpoint methods (scheduler tasks are mutated)
                         TaskControlBlock* mutable_cur = Scheduler::instance().get_current_tcb();
                         ep->call(mutable_cur, msg, len, reply_buf, max_reply_len);
                         Scheduler::instance().schedule(); // Block and switch task
@@ -160,6 +189,16 @@ extern "C" {
                 void* msg_buf = reinterpret_cast<void*>(frame->r1);
                 uint32_t max_len = frame->r2;
                 uint32_t* out_sender_id = reinterpret_cast<uint32_t*>(frame->r3);
+                
+                // 校验 msg_buf 和 out_sender_id
+                if (max_len > 0 && !SyscallValidator::validate_user_ptr(msg_buf, max_len, stack_base, stack_size)) {
+                    uart_puts("[Kernel] SYS_IPC_RECEIVE: invalid msg_buf ptr\n");
+                    break;
+                }
+                if (out_sender_id && !SyscallValidator::validate_user_ptr(out_sender_id, sizeof(uint32_t), stack_base, stack_size)) {
+                    uart_puts("[Kernel] SYS_IPC_RECEIVE: invalid out_sender_id ptr\n");
+                    break;
+                }
                 
                 if (cap_id < auroraos::kernel::MAX_CSPACE_SLOTS) {
                     const auto& cap = cur->cspace[cap_id];
@@ -184,9 +223,15 @@ extern "C" {
                 uint32_t sender_id = frame->r0;
                 void* reply_msg = reinterpret_cast<void*>(frame->r1);
                 uint32_t len = frame->r2;
-                // Reply is non-blocking for the receiver, it just wakes up the sender.
-                // We use static reply method for now
-                auroraos::kernel::Endpoint::reply(nullptr, sender_id, reply_msg, len);
+                
+                // 校验 reply_msg
+                if (len > 0 && !SyscallValidator::validate_user_ptr(reply_msg, len, stack_base, stack_size)) {
+                    uart_puts("[Kernel] SYS_IPC_REPLY: invalid reply_msg ptr\n");
+                    break;
+                }
+                
+                TaskControlBlock* mutable_cur = Scheduler::instance().get_current_tcb();
+                auroraos::kernel::Endpoint::reply(mutable_cur, sender_id, reply_msg, len);
                 Scheduler::instance().schedule(); // Yield to the awoken sender (Fastpath)
                 break;
             }
@@ -218,9 +263,8 @@ extern "C" {
         // 强制触发一次调度，让出 CPU
         Scheduler::instance().schedule();
         
-        // 因为是从异常上下文调用 schedule()，在 PendSV 处理前我们必须死循环等待，
-        // PendSV 发生后，由于当前线程已终止，它将永远不会再被调度回来。
-        while (1) {} 
+        // MemManage_Handler 必须正常返回，以便硬件执行尾链（tail-chaining）并触发 PendSV
+        return;
     }
 
     void HardFault_Handler(void) {
@@ -258,8 +302,6 @@ void SysTick_Handler(void) {
     
     // 每 5ms 触发一次高频时间片重新评估，保障 30fps 窗口内的微秒级响应
     if (tick_count % 5 == 0) {
-        g_current_tcb_ptr = sched.get_current_tcb();
         sched.schedule(); 
-        g_next_tcb_ptr = sched.get_current_tcb();
     }
 }

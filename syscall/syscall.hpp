@@ -73,21 +73,26 @@ inline void sys_sleep(uint32_t ticks) {
 #endif
 }
 
-// ----------------------------------------------------
+// IPC Reply Buffer descriptor to overcome 4-register limit in SVC frame
+struct IpcReplyDesc {
+    void* buf;
+    uint32_t max_len;
+};
+
 // IPC: 发送并阻塞等待回复 (同步机制)
 inline void sys_ipc_call(uint32_t cap_id, void* msg, uint32_t len, void* reply_buf, uint32_t max_reply_len) {
+    IpcReplyDesc desc = { reply_buf, max_reply_len };
 #if defined(ARCH_RISCV32)
     __asm__ volatile (
         "mv a0, %0\n\t"
         "mv a1, %1\n\t"
         "mv a2, %2\n\t"
         "mv a3, %3\n\t"
-        "mv a4, %4\n\t"
-        "li a7, %5\n\t"
+        "li a7, %4\n\t"
         "ecall\n\t"
         : 
-        : "r"(cap_id), "r"(msg), "r"(len), "r"(reply_buf), "r"(max_reply_len), "i"(SYS_IPC_CALL)
-        : "a0", "a1", "a2", "a3", "a4", "a7", "memory"
+        : "r"(cap_id), "r"(msg), "r"(len), "r"(&desc), "i"(SYS_IPC_CALL)
+        : "a0", "a1", "a2", "a3", "a7", "memory"
     );
 #else
     __asm__ volatile (
@@ -95,11 +100,10 @@ inline void sys_ipc_call(uint32_t cap_id, void* msg, uint32_t len, void* reply_b
         "mov r1, %1\n\t"
         "mov r2, %2\n\t"
         "mov r3, %3\n\t"
-        "mov r4, %4\n\t"
-        "svc %5\n\t"
+        "svc %4\n\t"
         : 
-        : "r"(cap_id), "r"(msg), "r"(len), "r"(reply_buf), "r"(max_reply_len), "i"(SYS_IPC_CALL)
-        : "r0", "r1", "r2", "r3", "r4", "memory"
+        : "r"(cap_id), "r"(msg), "r"(len), "r"(&desc), "i"(SYS_IPC_CALL)
+        : "r0", "r1", "r2", "r3", "memory"
     );
 #endif
 }
