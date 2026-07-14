@@ -39,8 +39,9 @@ struct SandboxDescriptor {
     // Compute and store the CRC32 over the other three fields.
     // Call this whenever stack_base / size_pow2 / version are updated.
     void seal() noexcept {
-        const uint32_t words[3] = {
-            static_cast<uint32_t>(stack_base),
+        const uint32_t words[4] = {
+            static_cast<uint32_t>(stack_base & 0xFFFFFFFF),
+            static_cast<uint32_t>((static_cast<uint64_t>(stack_base) >> 32) & 0xFFFFFFFF),
             static_cast<uint32_t>(size_pow2),
             version
         };
@@ -49,8 +50,9 @@ struct SandboxDescriptor {
     }
 
     [[nodiscard]] bool is_valid() const noexcept {
-        const uint32_t words[3] = {
-            static_cast<uint32_t>(stack_base),
+        const uint32_t words[4] = {
+            static_cast<uint32_t>(stack_base & 0xFFFFFFFF),
+            static_cast<uint32_t>((static_cast<uint64_t>(stack_base) >> 32) & 0xFFFFFFFF),
             static_cast<uint32_t>(size_pow2),
             version
         };
@@ -112,8 +114,8 @@ public:
         // Ensure base_addr is aligned to size
         uint32_t alignment_mask = (1 << size_power_of_2) - 1;
         if (base_addr & alignment_mask) {
-            // Not aligned, behavior undefined or error. We'll force align for safety here or assert
-            base_addr &= ~alignment_mask;
+            KERNEL_ASSERT(false, "MPU: configure_region base_addr misaligned");
+            return;
         }
         
         *reg_rnr = region_num;
@@ -136,6 +138,7 @@ public:
         }
 
         *reg_rasr = rasr_val;
+        __asm__ volatile ("dsb\n\t" "isb\n\t" : : : "memory");
     }
 
     // ─────────────────────────────────────────────────────────────────────
@@ -151,17 +154,23 @@ public:
     // ─────────────────────────────────────────────────────────────────────
     void update_user_sandbox_verified(const SandboxDescriptor& desc) noexcept {
         // 1. CRC32 integrity
-        KERNEL_ASSERT(desc.is_valid(), "MPU: SandboxDescriptor CRC32 mismatch");
+        if (!desc.is_valid()) {
+            KERNEL_ASSERT(false, "MPU: SandboxDescriptor CRC32 mismatch");
+            return;
+        }
 
         // 2. size_pow2 range (32 B = 2^5 … 128 KB = 2^17)
-        KERNEL_ASSERT(desc.size_pow2 >= 5u && desc.size_pow2 <= 17u,
-                      "MPU: size_pow2 out of range [5..17]");
+        if (!(desc.size_pow2 >= 5u && desc.size_pow2 <= 17u)) {
+            KERNEL_ASSERT(false, "MPU: size_pow2 out of range [5..17]");
+            return;
+        }
 
         // 3. Alignment: base_addr must be a multiple of region size
-        const uintptr_t align_mask =
-            (static_cast<uintptr_t>(1) << desc.size_pow2) - 1u;
-        KERNEL_ASSERT((desc.stack_base & align_mask) == 0u,
-                      "MPU: stack_base misaligned to region size");
+        const uintptr_t align_mask = (static_cast<uintptr_t>(1) << desc.size_pow2) - 1u;
+        if ((desc.stack_base & align_mask) != 0u) {
+            KERNEL_ASSERT(false, "MPU: stack_base misaligned to region size");
+            return;
+        }
 
         // All checks passed — program Region 7
         configure_region(7, desc.stack_base, desc.size_pow2,
