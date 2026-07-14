@@ -111,8 +111,13 @@ public:
     // 配置单个保护区域
     // region_num: 0~7 | base_addr: 需与 size 对齐 | size_power_of_2: 例如 256字节为 8 (2^8=256)
     void configure_region(uint8_t region_num, uintptr_t base_addr, uint8_t size_power_of_2, uint32_t ap, bool execute_never = false, bool is_device = false) {
+        if (size_power_of_2 < 5u || size_power_of_2 > 31u) {
+            KERNEL_ASSERT(false, "MPU: configure_region size_power_of_2 out of range");
+            return;
+        }
+
         // Ensure base_addr is aligned to size
-        uint32_t alignment_mask = (1 << size_power_of_2) - 1;
+        uint32_t alignment_mask = (1u << size_power_of_2) - 1u;
         if (base_addr & alignment_mask) {
             KERNEL_ASSERT(false, "MPU: configure_region base_addr misaligned");
             return;
