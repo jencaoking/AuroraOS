@@ -3,7 +3,6 @@
 
 #include <stdint.h>
 #include "device.hpp"
-#include <iostream>
 
 // 16位 RGB565 颜色定义
 using ColorRGB565 = uint16_t;

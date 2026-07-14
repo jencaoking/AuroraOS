@@ -35,15 +35,12 @@ struct DirtyRect {
 };
 
 // 带有脏区域跟踪能力的超级渲染缓冲树
+// ⚠️ 注意：由于内部含有庞大的 buffer_ 数组，本对象严禁作为局部变量在栈上创建，必须静态分配或放于专用大内存区！
 template <uint16_t Width, uint16_t Height>
 class FrameBuffer {
 private:
     ColorRGB565 buffer_[Width * Height];
     DirtyRect   dirty_;
-    
-    // 临时的行块发送缓冲区，避免大块内存分配
-    static constexpr uint16_t PATCH_LINE_BUF_SIZE = Width * 4;
-    ColorRGB565 line_buffer_[PATCH_LINE_BUF_SIZE];
 
 public:
     FrameBuffer() {
@@ -51,7 +48,13 @@ public:
         dirty_.reset();
     }
 
+    // ⚠️ 警告：绕过图形接口直接写入显存后，必须手动调用 mark_dirty()，否则将不会被刷新！
     ColorRGB565* get_raw_buffer() { return buffer_; }
+    
+    // 提供给绕过封装直接写内存的场景，强制标记脏区域
+    void mark_dirty(uint16_t x, uint16_t y, uint16_t w, uint16_t h) {
+        dirty_.union_rect(x, y, w, h);
+    }
 
     // ========================================================
     // 2D 图形基础原语：打点 (自动追踪脏点)
