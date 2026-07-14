@@ -400,7 +400,9 @@ public:
                 *tasks[i].stack_canary_ptr != 0xDEADBEEFu &&
                 tasks[i].state != TaskState::Terminated) {
                 // 栈底哨兵被覆盖 — 立即终止该任务，防止内核数据被破坏
-                tasks[i].state = TaskState::Terminated;
+                // 必须通过 set_task_state() 以正确从就绪链表摘除该任务节点，
+                // 防止已损坏的任务继续被 schedule() 调度上处理器执行。
+                set_task_state(i, TaskState::Terminated);
                 // SecurityMonitor 将在下一次心跳周期检测到并记录
                 continue;
             }
@@ -451,9 +453,6 @@ public:
         return &tasks[current_task_index];
     }
     
-    TaskControlBlock& get_task(uint32_t id) {
-        return tasks[id];
-    }
 
     int get_task_count() const { return task_count; }
     TaskControlBlock* get_task(int index) { 
