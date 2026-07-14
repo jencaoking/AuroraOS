@@ -20,7 +20,7 @@ inline void sys_print(const char* str) {
         "svc %1\n\t"
         : 
         : "r"(str), "i"(SYS_PRINT)
-        : "r0"
+        : "r0", "memory"
     );
 }
 
@@ -56,12 +56,11 @@ inline void sys_ipc_call(uint32_t cap_id, void* msg, uint32_t len, void* reply_b
         "mov r1, %1\n\t"
         "mov r2, %2\n\t"
         "mov r3, %3\n\t"
-        "push {%4}\n\t"    // 第5个参数压栈或使用 r4 (由于 GCC inline asm 限制，在 Cortex-M 上可以直接放栈)
-        "pop {r4}\n\t"     // 这里简单演示，用 r4 传 max_reply_len
+        "mov r4, %4\n\t"
         "svc %5\n\t"
         : 
         : "r"(cap_id), "r"(msg), "r"(len), "r"(reply_buf), "r"(max_reply_len), "i"(SYS_IPC_CALL)
-        : "r0", "r1", "r2", "r3", "r4"
+        : "r0", "r1", "r2", "r3", "r4", "memory"
     );
 }
 
@@ -76,7 +75,7 @@ inline void sys_ipc_receive(uint32_t cap_id, void* msg_buf, uint32_t max_len, ui
         "svc %4\n\t"
         : 
         : "r"(cap_id), "r"(msg_buf), "r"(max_len), "r"(out_sender_id), "i"(SYS_IPC_RECEIVE)
-        : "r0", "r1", "r2", "r3"
+        : "r0", "r1", "r2", "r3", "memory"
     );
 }
 
@@ -89,7 +88,7 @@ inline void sys_ipc_reply(uint32_t sender_id, void* reply_msg, uint32_t len) {
         "svc %3\n\t"
         : 
         : "r"(sender_id), "r"(reply_msg), "r"(len), "i"(SYS_IPC_REPLY)
-        : "r0", "r1", "r2"
+        : "r0", "r1", "r2", "memory"
     );
 }
 
