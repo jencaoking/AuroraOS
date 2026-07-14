@@ -660,7 +660,8 @@ python scripts/genconfig.py
 - [x] 基于 seL4 的 Capability 安全模型与权限管理
 - [x] 消息传递 IPC（QNX 风格同步 MsgSend/Receive/Reply）
 - [x] WiFi 驱动 + 完整 TCP/IP
-- [ ] GPU 驱动 + GUIX 图形框架
+- [x] GPU 驱动抽象与图形管道 (Command Buffer / KMS)
+- [ ] GUIX 智能图形框架与多窗口管理
 - [ ] 摄像头 + 多媒体
 - [ ] 应用沙盒
 
