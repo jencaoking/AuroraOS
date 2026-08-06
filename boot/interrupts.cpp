@@ -13,6 +13,11 @@ using auroraos::kernel::CSpace;
 #include "../metrics/metrics.hpp"
 #ifdef CONFIG_NETWORKING
 #include "../net/firewall/firewall_engine.hpp"
+#include "../kernel/audit.hpp"
+#else
+// No-op audit stub for builds without networking (e.g., M0+ 8 KB RAM)
+// AuditEngine's 4 KB ring buffer would overflow the tiny SRAM budget.
+#define AUDIT_HOOK_SVC(svc, result) ((void)0)
 #endif
 
 volatile uint32_t isr_enter_cycle = 0;
