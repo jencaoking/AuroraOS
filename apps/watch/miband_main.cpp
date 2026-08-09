@@ -5,6 +5,7 @@
 #include "ramfs.hpp"
 #include "littlefs_vnode.hpp"
 #include "mini_program_engine.hpp"
+#include "flash_device.hpp"
 
 // 引入由手环专属链接脚本 (linker_miband.ld) 导出的物理内存边界符号
 extern "C" uint32_t _heap_start;
@@ -12,8 +13,13 @@ extern "C" uint32_t end;
 
 // ========================================================
 // auroraOS MiBand 8 物理机总入口
-// C/C++ 运行时环境就绪后，Reset_Handler 将直接跳转至此
+// boot/boot.S 的 Reset_Handler → kernel_entry → bl kernel_main
+// 因此必须同时提供 kernel_main 符号以匹配 boot.S 预期。
 // ========================================================
+extern "C" void kernel_main(void) {
+    main();
+}
+
 extern "C" int main(void) {
     // 1. 初始化核心内存分配器 (Kernel Heap)
     // 接管 384KB SRAM 中除了静态数据和主栈之外的所有剩余空间
@@ -29,9 +35,9 @@ extern "C" int main(void) {
 
     // 挂载 LittleFS 到 /storage，对接 Apollo3 内置的 1MB Flash 的 App 分区
     // 确保用户的表盘数据、运动历史和 Lua 小程序在掉电后不丢失
-    // FlashDevice* flash_dev = new FlashDevice();
-    // LittleFsVnode* lfs = new LittleFsVnode(flash_dev);
-    // VFS::instance().mount("/storage", lfs);
+    FlashDevice* flash_dev = new FlashDevice();
+    LittleFsVnode* lfs = new LittleFsVnode(flash_dev);
+    VFS::instance().mount("/storage", lfs);
 
     // 4. 唤醒动态小程序引擎 (Lua Engine)
     // 预加载底层 C++ 绑定的原生 API (如控制震动马达、获取心率、屏幕局部重绘)

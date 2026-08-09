@@ -47,7 +47,7 @@ void sensor_ble_daemon_task() {
         current_tick += DAEMON_TICK_MS;
 
         // 3. 挂起自身，等待下一次 40ms 周期到来 (在此期间 CPU 可进入 WFI)
-        // sleep(DAEMON_TICK_MS); // 依赖 POSIX 层 sleep 实现
+        sleep(DAEMON_TICK_MS);
     }
 }
 
@@ -68,7 +68,7 @@ void idle_task() {
 // ========================================================
 extern "C" void miband_kernel_main(void) {
     // 1. 硬件级板载初始化 (配置 96MHz 时钟树、外设电源、关闭锁相环等)
-    // board_hardware_init();
+    board_hardware_init();
     
     // 2. 架构级初始化 (开启 M4F 硬件浮点运算单元 FPU，配置中断优先级)
     Arch::init();
@@ -87,32 +87,33 @@ extern "C" void miband_kernel_main(void) {
     // ========================================================
     
     // UI 线程栈 (分配 1024 uint32_t = 4KB，应对复杂的界面状态机)
-    uint32_t* ui_stack = new uint32_t[1024];
+    static uint32_t ui_stack[1024];
     uint32_t ui_tid = sched.create_task(ui_render_task, ui_stack, 1024 * sizeof(uint32_t), TaskPriority::Realtime)->id;
     
     // 将 UI 线程绑定到动态帧调度器
     FrameSchedulerV2::instance().init(30, ui_tid);
 
     // 传感器与 BLE 线程栈 (分配 512 uint32_t = 2KB，处理浮点数和网络封包)
-    uint32_t* daemon_stack = new uint32_t[512];
+    static uint32_t daemon_stack[512];
     sched.create_task(sensor_ble_daemon_task, daemon_stack, 512 * sizeof(uint32_t), TaskPriority::High);
 
     // Idle 线程栈 (极简 128 uint32_t = 0.5KB)
-    uint32_t* idle_stack = new uint32_t[128];
+    static uint32_t idle_stack[128];
     sched.create_task(idle_task, idle_stack, 128 * sizeof(uint32_t), TaskPriority::Idle); // 绝对最低优先级 0
 
     // ========================================================
     // 6. 激活内核心跳并点火升空！
     // ========================================================
     
-    // 配置 Apollo3 的 SysTick 硬件定时器为 1ms 触发一次
-    // volatile uint32_t* syst_ctrl = reinterpret_cast<volatile uint32_t*>(0xE000E010);
-    // volatile uint32_t* syst_load = reinterpret_cast<volatile uint32_t*>(0xE000E014);
-    // *syst_load = (SYSTEM_CORE_CLOCK / 1000) - 1; 
-    // *syst_ctrl = (1 << 2) | (1 << 1) | (1 << 0);
+    volatile uint32_t* syst_ctrl = reinterpret_cast<volatile uint32_t*>(0xE000E010);
+    volatile uint32_t* syst_load = reinterpret_cast<volatile uint32_t*>(0xE000E014);
+    volatile uint32_t* syst_val  = reinterpret_cast<volatile uint32_t*>(0xE000E018);
+    *syst_load = (SYSTEM_CORE_CLOCK / 1000) - 1;   // 1ms tick period
+    *syst_val  = 0;                                  // clear current value
+    *syst_ctrl = (1u << 2) | (1u << 1) | (1u << 0);  // CLKSOURCE=core, TICKINT=on, ENABLE=on
 
     // 触发系统首次上下文切换，跳入最高优先级的 UI 线程！
-    // Arch::request_context_switch(); 
+    Arch::request_context_switch(); 
 
     while (1) {} // 内核永远不该返回到这里
 }

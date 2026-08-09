@@ -80,6 +80,9 @@ elseif(BOARD STREQUAL "miband8")
         arch/arm/cortex-m/cm4f/context_switch.S
         apps/watch/miband_main.cpp
         apps/watch/watch_app.cpp
+        apps/watch/font_data.cpp
+        boards/xiaomi/miband8/board.cpp
+        experimental/net/ble/ble_stack.cpp
     )
 endif()
 
