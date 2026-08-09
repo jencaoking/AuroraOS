@@ -80,9 +80,7 @@ elseif(BOARD STREQUAL "miband8")
         arch/arm/cortex-m/cm4f/context_switch.S
         apps/watch/miband_main.cpp
         apps/watch/watch_app.cpp
-        apps/watch/font_data.cpp
         boards/xiaomi/miband8/board.cpp
-        experimental/net/ble/ble_stack.cpp
     )
 endif()
 
@@ -160,6 +158,8 @@ elseif(BOARD STREQUAL "miband8")
         ${CMAKE_SOURCE_DIR}/drivers/display
         ${CMAKE_SOURCE_DIR}/drivers/sensor
         ${CMAKE_SOURCE_DIR}/drivers/input
+        ${CMAKE_SOURCE_DIR}/drivers/storage
+        ${CMAKE_SOURCE_DIR}/3rdparty/littlefs
         ${CMAKE_SOURCE_DIR}/net/ble
         ${CMAKE_SOURCE_DIR}/apps/watch
         ${CMAKE_SOURCE_DIR}/arch/${ARCH_DIR}

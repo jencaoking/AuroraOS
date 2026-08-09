@@ -2,6 +2,10 @@
 
 # Build directories
 build/
+build_*/
+build_tests/
+build_qemu/
+tests/build*/
 bin/
 out/
 

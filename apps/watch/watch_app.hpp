@@ -7,42 +7,44 @@
 #include "st7789_driver.hpp"
 #include "sensor_framework.hpp"
 #include "gesture_recognizer.hpp"
+#include "ble_stack.hpp"
 #include "font_engine.hpp" // 位图字体引擎
 
-#include "../../ui/ui_manager.hpp"
-#include "../../ui/ui_manager.hpp"
-#include "../../ui/screen_navigator.hpp"
-#include "screens/watch_face_screen.hpp"
+// ========================================================
+// 手环 UI 页面路由枚举
+// ========================================================
+enum class WatchPage : uint8_t {
+    WATCH_FACE,     // 主表盘 (显示时间、步数、电量)
+    HEART_RATE,     // 实时心率测量页
+    ACTIVITY,       // 运动数据汇总页
+    QUICK_PANEL     // 下拉快捷控制中心
+};
 
 class WatchApp {
 private:
+    WatchPage current_page_;
     uint32_t  simulated_time_h_;
     uint32_t  simulated_time_m_;
 
-    // UI Framework 组件
-    FrameBuffer<DISPLAY_WIDTH, DISPLAY_HEIGHT>* fb_;
-    UI::UIRenderer* renderer_;
-    WatchFaceScreen* watch_face_screen_;
-
-    WatchApp() : simulated_time_h_(10), simulated_time_m_(9),
-                 fb_(nullptr), renderer_(nullptr), watch_face_screen_(nullptr) {}
+    WatchApp() : current_page_(WatchPage::WATCH_FACE), simulated_time_h_(10), simulated_time_m_(9) {}
 
     // ========================================================
     // 私有 UI 渲染模块 (依赖硬件 ST7789 与位图引擎)
     // ========================================================
-    // ========================================================
-    // 私有 UI 渲染模块 (依赖硬件 ST7789 与位图引擎)
-    // ========================================================
+    void render_watch_face();
+
+    void render_heart_rate_page() {
+        // 渲染心率专用测量动画与历史折线图
+    }
+
+    void render_quick_panel() {
+        // 渲染勿扰模式、亮度调节、BLE 开关等控制图标
+    }
 
 public:
     static WatchApp& instance() {
         static WatchApp app;
         return app;
-    }
-
-    void get_time(uint32_t& h, uint32_t& m) const {
-        h = simulated_time_h_;
-        m = simulated_time_m_;
     }
 
     // ========================================================
@@ -55,18 +57,9 @@ public:
         
         // 2. 启动蓝牙协议栈并开始广播
         BleManager::instance().init();
-
-        // 3. 构建全屏显存与 Renderer (采用动态内存分配机制)
-        fb_ = new FrameBuffer<DISPLAY_WIDTH, DISPLAY_HEIGHT>();
-        renderer_ = new UI::UIRenderer(*fb_);
-        UI::UiManager::instance().set_renderer(renderer_);
-
-        // 4. 构建 Watch Face 页面 Widget Tree
-        watch_face_screen_ = new WatchFaceScreen();
-        UI::ScreenNavigator::instance().push(watch_face_screen_);
-        UI::UiManager::instance().set_root_view(&UI::ScreenNavigator::instance());
+        BleManager::instance().start_advertising();
         
-        // 5. 强制系统进入亮屏活跃状态
+        // 3. 强制系统进入亮屏活跃状态
         PowerManager::instance().transition_to(PowerState::ACTIVE);
     }
 
@@ -86,11 +79,12 @@ public:
             return;
         }
 
-        // 调用 UI Framework 引擎驱动自动重绘
-        UI::UiManager::instance().render();
-        
-        // 将整屏显存刷入驱动
-        St7789Driver::instance().write_patch(reinterpret_cast<uint16_t*>(fb_->get_buffer()), DISPLAY_WIDTH * DISPLAY_HEIGHT);
+        switch (current_page_) {
+            case WatchPage::WATCH_FACE: render_watch_face(); break;
+            case WatchPage::HEART_RATE: render_heart_rate_page(); break;
+            case WatchPage::QUICK_PANEL: render_quick_panel(); break;
+            default: break;
+        }
     }
 
     // ========================================================

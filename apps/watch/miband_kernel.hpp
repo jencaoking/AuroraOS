@@ -47,7 +47,7 @@ void sensor_ble_daemon_task() {
         current_tick += DAEMON_TICK_MS;
 
         // 3. 挂起自身，等待下一次 40ms 周期到来 (在此期间 CPU 可进入 WFI)
-        sleep(DAEMON_TICK_MS);
+        Scheduler::instance().sleep(DAEMON_TICK_MS);
     }
 }
 
@@ -113,7 +113,7 @@ extern "C" void miband_kernel_main(void) {
     *syst_ctrl = (1u << 2) | (1u << 1) | (1u << 0);  // CLKSOURCE=core, TICKINT=on, ENABLE=on
 
     // 触发系统首次上下文切换，跳入最高优先级的 UI 线程！
-    Arch::request_context_switch(); 
+    Arch::trigger_context_switch(); 
 
     while (1) {} // 内核永远不该返回到这里
 }

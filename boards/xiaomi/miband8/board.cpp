@@ -2,7 +2,6 @@
 // 目标：小米手环 8 (MiBand 8)
 
 #include "board.h"
-#include "../../arch/arm/cortex-m/cm4f/arch_impl.hpp"
 
 // ============================================================
 // 板级硬件初始化：配置 96MHz 时钟树、GPIO、外设电源
